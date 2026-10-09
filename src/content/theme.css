@@ -1,0 +1,168 @@
+/* theme.css — Playlist Organizer token layer.
+   Five schemes. Every panel colour comes from here; nothing else declares one. */
+
+.organizer-panel {
+  /* ——— defaults (Steel) ——— */
+  --color-bg: #171a20;
+  --color-surface: #23262e;
+  --color-text: #e9e9ed;
+  --color-divider: color-mix(in srgb, var(--color-text) 16%, transparent);
+
+  --color-muted: color-mix(in srgb, var(--color-text) 72%, transparent);
+  --color-muted-2: color-mix(in srgb, var(--color-text) 60%, transparent);
+
+  --color-accent: #7f8aa6;
+  --color-accent-300: #c6ccdb;
+  --color-accent-600: #5d6579;
+  --color-accent-700: #4e566b;
+  --color-accent-800: #363c4b;
+  --color-accent-900: #232831;
+
+  --color-neutral-100: #f3f5fe;
+  --color-neutral-600: #75798c;
+  --color-neutral-700: #595d6c;
+  --color-neutral-800: #3f424d;
+  --color-neutral-900: #292b31;
+
+  --font-heading: "Inter", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-mono: ui-monospace, Menlo, monospace;
+
+  --space-1: 2.8px; --space-2: 5.6px; --space-3: 8.4px;
+  --space-4: 11.2px; --space-6: 16.8px; --space-8: 22.4px;
+
+  --radius-sm: 4px; --radius-md: 8px; --radius-lg: 14px;
+
+  --shadow-sm: 0 0 0 1px var(--color-neutral-800);
+  --shadow-md: 0 0 0 1px var(--color-neutral-700), 0 6px 18px rgba(0,0,0,.55);
+
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+/* ——— dark: Verdigris ——— */
+.organizer-panel[data-scheme="verdigris"] {
+  --color-bg: #141c1e;
+  --color-surface: #1f2a2c;
+  --color-accent: #35a89c;
+  --color-accent-300: #a9e6de;
+  --color-accent-600: #28857b;
+  --color-accent-700: #1f6a62;
+  --color-accent-800: #164b45;
+  --color-accent-900: #10312e;
+}
+
+/* ——— dark: Ember ——— */
+.organizer-panel[data-scheme="ember"] {
+  --color-bg: #1d1719;
+  --color-surface: #2b2325;
+  --color-accent: #d07a5f;
+  --color-accent-300: #f3c3b2;
+  --color-accent-600: #a85f47;
+  --color-accent-700: #8b4b36;
+  --color-accent-800: #633425;
+  --color-accent-900: #42231a;
+}
+
+/* ——— light: Mist (cool). Accent ramp inverts: -300 is the DARK step. ——— */
+.organizer-panel[data-scheme="mist"] {
+  --color-bg: #f2f4f7;
+  --color-surface: #e3e7ee;
+  --color-text: #23262e;
+  --color-divider: color-mix(in srgb, #23262e 16%, transparent);
+  --color-muted: #4f5561;
+  --color-muted-2: #585e6b;
+  --color-accent: #3f6fa8;
+  --color-accent-300: #24456b;
+  --color-accent-600: #35608f;
+  --color-accent-700: #a8c3e2;
+  --color-accent-800: #cddbee;
+  --color-accent-900: #e6edf7;
+  --color-neutral-100: #23262e;
+  --color-neutral-600: #8d94a1;
+  --color-neutral-700: #b3b9c4;
+  --color-neutral-800: #d2d7e0;
+  --color-neutral-900: #e3e7ee;
+  --shadow-sm: 0 0 0 1px color-mix(in srgb, #23262e 14%, transparent);
+  --shadow-md: 0 0 0 1px color-mix(in srgb, #23262e 18%, transparent), 0 6px 18px rgba(35,38,46,.12);
+}
+
+/* ——— light: Linen (warm) ——— */
+.organizer-panel[data-scheme="linen"] {
+  --color-bg: #f8f4ed;
+  --color-surface: #ece5d9;
+  --color-text: #2a2723;
+  --color-divider: color-mix(in srgb, #2a2723 16%, transparent);
+  --color-muted: #55504a;
+  --color-muted-2: #5e5851;
+  --color-accent: #a8663f;
+  --color-accent-300: #5a3520;
+  --color-accent-600: #7d4a2c;
+  --color-accent-700: #d9a98b;
+  --color-accent-800: #ecd6c4;
+  --color-accent-900: #f6e9dd;
+  --color-neutral-100: #2a2723;
+  --color-neutral-600: #948b7e;
+  --color-neutral-700: #bcb4a7;
+  --color-neutral-800: #d8d0c2;
+  --color-neutral-900: #ece5d9;
+  --shadow-sm: 0 0 0 1px color-mix(in srgb, #2a2723 14%, transparent);
+  --shadow-md: 0 0 0 1px color-mix(in srgb, #2a2723 18%, transparent), 0 6px 18px rgba(42,39,35,.12);
+}
+
+/* ——— accent glow off ——— */
+.organizer-panel[data-glow="off"] * { box-shadow: none !important; }
+
+/* ——— shared primitives ——— */
+.organizer-panel .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  cursor: pointer; font-family: var(--font-heading); font-weight: 500;
+  font-size: 14px; line-height: 1.2; color: var(--color-text);
+  background: transparent; border: 1px solid transparent;
+  padding: var(--space-2) calc(var(--space-3) * 1.2);
+  border-radius: var(--radius-md);
+}
+.organizer-panel .btn-primary { color: var(--color-accent-300); border-color: var(--color-accent); }
+.organizer-panel .btn-primary:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.organizer-panel .btn-primary:active { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
+.organizer-panel .btn-secondary { border-color: var(--color-divider); }
+.organizer-panel .btn-secondary:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.organizer-panel .btn-icon { width: 30px; height: 30px; padding: 0; }
+.organizer-panel .btn:disabled { opacity: .45; cursor: not-allowed; }
+.organizer-panel :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+.organizer-panel .input {
+  width: 100%; min-height: 36px; padding: 6px 10px 6px 30px; font: inherit; font-size: 14px;
+  color: var(--color-text); caret-color: var(--color-accent);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.organizer-panel .input:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
+
+.organizer-panel .tag {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
+  padding: 3px 10px; border-radius: 6px;
+  background: var(--color-neutral-800); color: var(--color-neutral-100);
+}
+.organizer-panel .tag-accent { background: var(--color-accent-800); color: var(--color-accent-300); }
+.organizer-panel .tag-outline { border: 1px solid var(--color-accent); color: var(--color-accent-300); background: transparent; }
+
+/* the fading rule — a Nocturne signature */
+.organizer-panel .rule-b {
+  background: linear-gradient(to right, transparent,
+    var(--color-divider) 48px, var(--color-divider) calc(100% - 48px), transparent)
+    no-repeat bottom / 100% 1px;
+}
+.organizer-panel .row-rule {
+  background: linear-gradient(to right, transparent,
+    color-mix(in srgb, var(--color-text) 10%, transparent) 40px,
+    color-mix(in srgb, var(--color-text) 10%, transparent) calc(100% - 40px), transparent)
+    no-repeat bottom / 100% 1px;
+}
+
+.organizer-panel .muted { color: var(--color-muted); }
+.organizer-panel .muted-2 { color: var(--color-muted-2); }
+.organizer-panel .num { font: 400 11px var(--font-mono); color: var(--color-muted-2); }

@@ -1,0 +1,12 @@
+﻿# Build output (regenerate with the PowerShell zip command in README.md)
+dist/
+
+# Design reference material
+design-mockup/
+
+# Internal session notes (local paths, profile details)
+HANDOFF.md
+
+# Extension packaging artifacts / keys
+*.crx
+*.pem

@@ -1,0 +1,24 @@
+body { width: 360px; margin: 0; font: 13px Roboto, "Segoe UI", Arial, sans-serif; background: #1f1f1f; color: #f1f1f1; }
+header { display: flex; align-items: center; gap: 8px; padding: 12px; background: #2a2a2a; border-bottom: 1px solid #3a3a3a; }
+h1 { font-size: 14px; margin: 0; flex: 1; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #aaa; margin: 0 0 8px; display: flex; align-items: center; gap: 6px; }
+section { padding: 12px; border-bottom: 1px solid #3a3a3a; }
+.n { background: #333; border-radius: 8px; padding: 0 6px; font-size: 11px; color: #f1f1f1; }
+.list { list-style: none; margin: 0; padding: 0; max-height: 200px; overflow: auto; }
+.list li { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid #2f2f2f; }
+.list li i { width: 10px; height: 10px; border-radius: 50%; background: #333; flex: none; }
+.list li a { color: #f1f1f1; text-decoration: none; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list li a:hover { text-decoration: underline; }
+.tag { background: #333; border-radius: 10px; padding: 1px 7px; font-size: 11px; margin-left: 2px; }
+label { display: block; margin: 8px 0; color: #ccc; }
+label.chk { display: flex; align-items: center; gap: 6px; }
+input[type=number], input[type=text] { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; background: #333; color: #f1f1f1; border: 1px solid #3a3a3a; border-radius: 4px; padding: 6px 8px; font: inherit; }
+.btn { background: #333; color: #f1f1f1; border: 1px solid #3a3a3a; border-radius: 4px; padding: 6px 10px; cursor: pointer; font: inherit; }
+.btn.primary { background: #ff4e45; border-color: #ff4e45; color: #fff; }
+.btn:hover { filter: brightness(1.1); }
+.hint { color: #aaa; font-size: 12px; line-height: 1.4; }
+.hint a { color: #ff4e45; }
+.row { display: flex; align-items: center; gap: 8px; }
+.spacer { flex: 1; }
+.subhead { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #888; margin: 14px 0 2px; padding-top: 10px; border-top: 1px solid #2f2f2f; }
+.svc { display: inline-block; font-size: 9px; text-transform: uppercase; letter-spacing: .03em; background: #333; border-radius: 3px; padding: 1px 4px; margin-right: 4px; color: #aaa; flex: none; }

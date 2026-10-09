@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "Playlist Organizer for YouTube Music & Spotify",
+  "version": "0.4.5",
+  "description": "Organize playlists on YouTube Music and Spotify: sort by artist/date, find duplicates (with remix/collab matching), bulk move tracks, tag playlists, and export. Works in any UI language.",
+  "permissions": ["storage", "scripting"],
+  "host_permissions": ["https://music.youtube.com/*", "https://open.spotify.com/*"],
+  "background": {
+    "service_worker": "src/background/background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Playlist Organizer",
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://music.youtube.com/*", "https://open.spotify.com/*"],
+      "js": [
+        "src/lib/utils.js",
+        "src/lib/storage.js",
+        "src/content/ytm-dom.js",
+        "src/content/spotify-dom.js",
+        "src/content/site.js",
+        "src/content/metadata.js",
+        "src/content/automation.js",
+        "src/content/theme.js",
+        "src/content/icons.js",
+        "src/content/layout-shared.js",
+        "src/content/layout-classic.js",
+        "src/content/layout-rail.js",
+        "src/content/layout-console.js",
+        "src/content/layout-spine.js",
+        "src/content/panel.js",
+        "src/content/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/content/panel.css", "src/content/theme.css"],
+      "matches": ["https://music.youtube.com/*", "https://open.spotify.com/*"]
+    }
+  ]
+}
