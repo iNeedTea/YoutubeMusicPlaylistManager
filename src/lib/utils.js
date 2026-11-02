@@ -1,10 +1,31 @@
-/* global window */
+/* global window, chrome */
 // Shared helpers. Everything lives under window.YTMO so the plain (non-module)
 // content scripts can share code without a bundler.
 (function () {
   const YTMO = (window.YTMO = window.YTMO || {});
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  /**
+   * False once this extension has been reloaded/removed underneath a still-open tab: the page keeps running the
+   * orphaned content script, but every chrome.* call from it throws "Extension context invalidated".
+   */
+  const alive = () => {
+    try {
+      return !!(chrome.runtime && chrome.runtime.id);
+    } catch (_) {
+      return false;
+    }
+  };
+
+  /** setInterval that retires itself for good once the extension context is gone, instead of throwing every tick (each throw lands in the extension's Errors list). */
+  function every(fn, ms) {
+    const id = setInterval(() => {
+      if (!alive()) return clearInterval(id);
+      fn();
+    }, ms);
+    return id;
+  }
 
   /**
    * Poll `fn` until it returns a truthy value or the timeout elapses.
@@ -57,7 +78,7 @@
   // Alternate-version markers: "(Remix)", "- Sped Up", "[Live]", "(Taylor's Version)", "(En Vivo)", "(Ao Vivo)"...
   const VERSION_WORDS =
     // English
-    "remix(?:es|ed)?|remaster(?:ed)?|version|ver\\.?|edit|mix|mixed|live|acoustic|instrumental|karaoke|demo|sped ?up|slowed|reverb|nightcore|extended|radio|mono|stereo|deluxe|bonus(?: track)?|reprise|rework(?:ed)?|re-?record(?:ed|ing)?|taylor'?s version|from the vault|orchestral|unplugged|stripped|piano|vip|dub|club|original|alt(?:ernate)?|single|album|bootleg|cover|8d|lo-?fi|chopped|screwed" +
+    "remix(?:es|ed)?|remaster(?:ed)?|version|ver\\.?|edit|mix|mixed|live|acoustic|instrumental|inst\\.?|a ?cappella|acapella|karaoke|demo|sped ?up|slowed|reverb|nightcore|extended|radio|mono|stereo|deluxe|bonus(?: track)?|reprise|rework(?:ed)?|re-?record(?:ed|ing)?|taylor'?s version|from the vault|orchestral|unplugged|stripped|piano|vip|dub|club|original|alt(?:ernate)?|single|album|bootleg|cover|8d|lo-?fi|chopped|screwed" +
     // Spanish / Portuguese
     '|en vivo|en directo|directo|ao vivo|remezcla|remezclado|versi[oó]n|vers[aã]o|ac[uú]stic[oa]|remasterizad[oa]|edici[oó]n|edi[cç][aã]o|acelerad[oa]|lent[oa]|orquestal|extendid[oa]|estendid[oa]' +
     // French
@@ -249,6 +270,8 @@
   YTMO.utils = {
     setHTML,
     sleep,
+    alive,
+    every,
     waitFor,
     debounce,
     escapeHtml,

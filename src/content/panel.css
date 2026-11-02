@@ -70,7 +70,12 @@
 }
 .organizer-panel.open .lo-shell { display: flex; }
 
-.organizer-panel .lo-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; }
+/* Full-window mode: the panel covers the whole viewport (theme.css already paints its background), with the content
+   column centred and capped so rows don't stretch edge-to-edge on a wide monitor. */
+.organizer-panel.full { top: 0; bottom: 0; left: 0; right: 0; width: auto; max-width: none; }
+.organizer-panel.full .lo-shell { max-width: 1400px; margin: 0 auto; border-right: 1px solid var(--color-divider); }
+
+.organizer-panel .lo-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; overscroll-behavior: contain; }
 .organizer-panel .lo-spacer { flex: 1; }
 .organizer-panel .lo-hint { font-size: 12px; margin: var(--space-2) 0; line-height: 1.4; }
 .organizer-panel .empty { padding: var(--space-8) var(--space-4); text-align: center; }
@@ -172,6 +177,31 @@
 .organizer-panel .lo-draghandle { color: var(--color-muted-2); cursor: grab; flex: none; display: inline-flex; align-items: center; }
 .organizer-panel [draggable="false"] .lo-draghandle { cursor: not-allowed; opacity: .4; }
 .organizer-panel .lo-draghandle svg { width: 14px; height: 14px; display: block; }
+
+/* ---------- "Add music" tab (every layout; markup in layout-discover.js) ---------- */
+
+.organizer-panel .lo-disc-input { padding-left: 10px; margin-top: var(--space-3); }
+.organizer-panel .lo-disc-sel { padding-left: 10px; flex: 1; min-width: 0; }
+.organizer-panel .lo-disc-check { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-3); font-size: 13px; cursor: pointer; }
+.organizer-panel .lo-disc-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); }
+.organizer-panel .lo-disc-error { margin-top: var(--space-3); font-size: 12.5px; color: var(--color-danger, #d9695f); }
+.organizer-panel .lo-disc-pickrow { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-3); }
+.organizer-panel .lo-disc-pickname { flex: none; width: 110px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.organizer-panel .lo-disc-bar { position: sticky; top: 0; z-index: 2; background: var(--color-bg); padding: var(--space-3) var(--space-6) var(--space-3); border-bottom: 1px solid var(--color-divider); }
+.organizer-panel .lo-disc-summary { font-size: 12.5px; color: var(--color-muted); }
+.organizer-panel .lo-disc-target { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-2); }
+.organizer-panel .lo-disc-target .lo-disc-input { margin-top: 0; flex: 1; }
+.organizer-panel .lo-disc-grp { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-6); margin-top: var(--space-2); background: var(--color-surface); font-size: 12.5px; }
+.organizer-panel .lo-disc-row { display: flex; align-items: center; gap: var(--space-3); padding: 4px var(--space-6); cursor: pointer; font-size: 13px; }
+.organizer-panel .lo-disc-row:hover { background: color-mix(in srgb, var(--color-text) 4%, transparent); }
+.organizer-panel .lo-disc-row.alt .lo-disc-title { color: var(--color-muted); }
+.organizer-panel .lo-disc-row.have .lo-disc-title { color: var(--color-muted-2); }
+/* One-click flow, "to check" rows: the member's name with every candidate artist as a checkbox beside it. */
+.organizer-panel .lo-disc-review { align-items: flex-start; }
+.organizer-panel .lo-disc-cands { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.organizer-panel .lo-disc-cands .lo-disc-row { padding: 2px var(--space-3); }
+.organizer-panel .lo-disc-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.organizer-panel .lo-disc-meta { flex: 0 1 30%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
 
 /* ---------- checkboxes / misc form ---------- */
 

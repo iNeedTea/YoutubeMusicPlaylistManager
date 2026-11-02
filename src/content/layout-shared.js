@@ -145,6 +145,12 @@
     </div>`;
   }
 
+  /** Header button that flips the panel between its side-panel size and covering the whole window — same in every layout. */
+  function fullscreenButton(ctx) {
+    const on = ctx.state.full;
+    return `<button class="btn btn-icon btn-secondary" data-act="toggle-full" title="${on ? 'Back to side panel (Esc)' : 'Fill the whole window'}" aria-label="${on ? 'Exit full window' : 'Fill the whole window'}">${ctx.icons(on ? 'arrows-in' : 'arrows-out')}</button>`;
+  }
+
   /** [key, label, count][] for whichever tabs apply to the current page — shared across layouts. */
   function tabList(ctx) {
     const { state, duplicateGroups } = ctx;
@@ -160,6 +166,7 @@
           ]
         : [['library', libLabel, 0]];
     if (state.page === 'playlist') tabs.push(['library', 'Tagged', 0]);
+    if (ctx.dom.capabilities.catalogAdd) tabs.push(['discover', 'Add music', 0]);
     tabs.push(['theme', 'Theme', 0]);
     return tabs;
   }
@@ -231,5 +238,5 @@
     return Array.from({ length: n }, () => `<div class="lo-skeleton-row"><span class="lo-skeleton"></span></div>`).join('');
   }
 
-  YTMO.layoutShared = { statsBody, notesBody, taggedBody, taggedBar, themeBody, tabList, visibleDupeGroups, MATCH_MODES, scanEta, scanStatusBar, skeletonRows };
+  YTMO.layoutShared = { fullscreenButton, statsBody, notesBody, taggedBody, taggedBar, themeBody, tabList, visibleDupeGroups, MATCH_MODES, scanEta, scanStatusBar, skeletonRows };
 })();

@@ -37,6 +37,9 @@
     'dots-three-vertical': '<circle cx="12" cy="5" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.3" fill="currentColor" stroke="none"/>',
     'list-magnifying-glass': '<path d="M4 6h9M4 12h5"/><circle cx="14.5" cy="15.5" r="4"/><path d="M20 21l-2.6-2.6"/>',
     'command-bar': '<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M9 9v.01M9 15v-.01M8 9h1v6M15 9h1.2a1.8 1.8 0 1 1 0 3.6H15m0-3.6v6.4"/>',
+    'arrows-out': '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+    'arrows-in': '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
+    'plus-circle': '<circle cx="12" cy="12" r="8.5"/><path d="M12 8v8M8 12h8"/>',
     'dots-six-vertical':
       '<circle cx="9" cy="5" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="19" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="5" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="19" r="1.3" fill="currentColor" stroke="none"/>',
   };

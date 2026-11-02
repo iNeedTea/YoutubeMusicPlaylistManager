@@ -6,7 +6,7 @@
   const YTMO = (window.YTMO = window.YTMO || {});
   const LS = () => YTMO.layoutShared;
 
-  const TAB_LABEL = { tracks: 'tracks', dupes: 'dupes', stats: 'stats', notes: 'tags', library: 'lib', theme: 'set' };
+  const TAB_LABEL = { tracks: 'tracks', dupes: 'dupes', stats: 'stats', notes: 'tags', library: 'lib', discover: 'add', theme: 'set' };
 
   function head(ctx) {
     const { h, state } = ctx;
@@ -20,6 +20,7 @@
       <span class="lo-cn-word">ORGANIZER</span>
       <span class="lo-cn-status muted" title="${h(title)}">${h(title)} — ${h(status)}</span>
       <span class="lo-spacer"></span>
+      ${LS().fullscreenButton(ctx)}
       <button class="btn btn-icon btn-secondary" data-act="close" title="Close" aria-label="Close">${ctx.icons('x')}</button>
     </header>`;
   }
@@ -220,6 +221,8 @@
     } else if (state.tab === 'library') {
       toolbarHtml = LS().taggedBar(ctx);
       bodyHtml = LS().taggedBody(ctx);
+    } else if (state.tab === 'discover') {
+      bodyHtml = LS().discoverBody(ctx);
     } else if (state.tab === 'theme') {
       bodyHtml = LS().themeBody(ctx);
     }

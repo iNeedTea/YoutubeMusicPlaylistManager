@@ -42,7 +42,7 @@
 
   YTMO.panel.init().then(() => {
     decorateLibrary();
-    setInterval(decorateLibrary, 2500);
+    YTMO.utils.every(decorateLibrary, 2500);
     YTMO.storage.onChange(() => decorateLibrary());
   });
 })();

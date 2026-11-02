@@ -292,7 +292,7 @@
     };
     window.addEventListener('yt-navigate-finish', () => setTimeout(fire, 50));
     window.addEventListener('popstate', () => setTimeout(fire, 50));
-    setInterval(fire, 700);
+    YTMO.utils.every(fire, 700);
   }
 
   function getLayoutInsets() {
@@ -489,7 +489,7 @@
     serviceName: 'YouTube Music',
     trackIdLabel: 'Video ID',
     scanHint: 'Scanning scrolls the page to the bottom so YouTube loads all tracks, then reads them.',
-    capabilities: { autoScroll: true, releaseDates: true, dateAdded: false, libraryPage: true, removeVerified: true, addVerified: true, physicalReorder: true },
+    capabilities: { autoScroll: true, releaseDates: true, dateAdded: false, libraryPage: true, removeVerified: true, addVerified: true, physicalReorder: true, catalogAdd: true },
     getPageType,
     getPlaylistId,
     getPlaylistHeader,

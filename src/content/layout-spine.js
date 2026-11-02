@@ -16,6 +16,7 @@
     const title = state.page === 'playlist' ? state.header.title || 'Playlist' : state.page === 'library' ? 'Library' : 'Playlist Organizer';
     return `<header class="lo-sp-head">
       <h2 class="lo-sp-title" title="${h(title)}">${h(title)}</h2>
+      ${LS().fullscreenButton(ctx)}
       <button class="btn btn-icon btn-secondary" data-act="close" title="Close" aria-label="Close">${ctx.icons('x')}</button>
     </header>`;
   }
@@ -259,6 +260,8 @@
     } else if (state.tab === 'library') {
       toolbarHtml = LS().taggedBar(ctx);
       bodyHtml = LS().taggedBody(ctx);
+    } else if (state.tab === 'discover') {
+      bodyHtml = LS().discoverBody(ctx);
     } else if (state.tab === 'theme') {
       bodyHtml = LS().themeBody(ctx);
     }

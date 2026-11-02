@@ -32,6 +32,7 @@
         <div class="muted lo-cl-sub">${sub}</div>
       </div>
       <div class="lo-cl-word muted-2">Organizer</div>
+      ${LS().fullscreenButton(ctx)}
       <button class="btn btn-icon btn-secondary" data-act="close" title="Close" aria-label="Close">${ctx.icons('x')}</button>
     </header>`;
   }
@@ -267,6 +268,8 @@
     } else if (state.tab === 'library') {
       toolbarHtml = taggedToolbar(ctx);
       bodyHtml = LS().taggedBody(ctx);
+    } else if (state.tab === 'discover') {
+      bodyHtml = LS().discoverBody(ctx);
     } else if (state.tab === 'theme') {
       bodyHtml = LS().themeBody(ctx);
     }

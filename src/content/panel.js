@@ -42,6 +42,7 @@
 
   const state = {
     open: false,
+    full: false, // panel fills the whole window (covers YouTube Music) instead of docking to the right
     page: 'other',
     playlistId: '',
     header: { title: '', subtitle: '' },
@@ -66,6 +67,34 @@
     theme: { ...YTMO.theme.DEFAULTS }, // { layout, scheme, density, glow } — loaded/applied in init()
     keepRule: 'earliest', // rail/spine bulk-keep-rule selector: 'earliest' | 'longest' | 'official'
     matchMode: 'title', // duplicates match-mode control: 'title' | 'id' | 'fuzzy' (title+artist / video id / fuzzy)
+    // "Add music" tab (YTM only). phase: idle -> searching -> resolved -> collecting -> [discovered -> collecting] -> preview -> adding -> done
+    disc: {
+      phase: 'idle',
+      artistQuery: '',
+      includeSolo: false,
+      memberText: '',
+      includeAlt: false,
+      franchise: false, // also collect the units/characters credited on the franchise artist's releases
+      discovered: [], // [{ browseId, name, releases }] — acts credited on what was read, offered in the 'discovered' phase
+      dxPick: new Set(), // browseIds of discovered acts to expand
+      dxDone: new Set(), // browseIds already collected (ticked, or followed automatically)
+      kinds: new Map(), // browseId -> 'cast' | 'member' | 'unit' | 'actor' | null: how each discovered act relates to the roster
+      lookup: null, // { query, status: 'loading'|'done'|'empty'|'error', pages, pick, errors } — opt-in member/cast lookup
+      autoNote: null, // { skipped: [names], total } — members the one-click flow wasn't sure enough about to add
+      reviewOnly: false, // 'resolved' phase from the one-click flow: show only the members that need a decision
+      autoPause: 0, // 'discovered' phase from the one-click flow: how many acts not on the roster are waiting for a look
+      group: null, // { candidates, pick }
+      members: [], // [{ query, candidates, pick }] — pick -1 = skip
+      progress: null, // { done, total, label }
+      tracks: [],
+      picked: new Set(), // video ids ticked in the preview
+      summary: null,
+      target: 'current', // 'current' | 'new' (forced to 'new' off a playlist page)
+      newName: '',
+      result: null,
+      error: '',
+      control: null,
+    },
   };
 
   let host, root, els;
@@ -451,7 +480,15 @@
         else if (m === 'cancel' || e.target === bg) resolve(null);
         if (m || e.target === bg) bg.remove();
       });
-      bg.querySelector('select, input')?.focus();
+      // Esc cancels the dialog (and only the dialog — the panel's own Esc handling skips keys while one is open).
+      bg.tabIndex = -1;
+      bg.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        e.stopPropagation();
+        resolve(null);
+        bg.remove();
+      });
+      (bg.querySelector('select, input') || bg).focus();
     });
   }
 
@@ -553,6 +590,507 @@
       (res.failed.length ? ' First error: ' + res.failed[0].error : '');
     setProgress(msg, 1, res.failed.length ? 'err' : 'ok');
     for (const t of res.ok) state.selected.delete(t.key);
+    render();
+  }
+
+  // ---------- "Add music" tab (catalog lookup + bulk add; YTM only — see catalog.js) ----------
+
+  const catalog = () => YTMO.catalog;
+  const parseMembers = (s) => [...new Set(String(s || '').split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean))];
+  const discTarget = () => (state.page === 'playlist' ? state.disc.target : 'new');
+  const discGroupName = () => {
+    const g = state.disc.group;
+    const c = g && g.candidates[g.pick];
+    return c ? c.name : state.disc.artistQuery.trim();
+  };
+  let discLastPaint = 0;
+  function discProgress(done, total, label) {
+    state.disc.progress = { done, total, label };
+    const now = Date.now();
+    if (now - discLastPaint > 150) {
+      discLastPaint = now;
+      render();
+    }
+  }
+
+  /** Default ticks: everything except alternate versions (unless asked for) and songs the target playlist already has. */
+  function discSelectDefault(forceOriginals) {
+    const d = state.disc;
+    const withAlt = d.includeAlt && !forceOriginals;
+    d.picked = new Set(d.tracks.filter((t) => !(t.inPlaylist && discTarget() === 'current') && (withAlt || !t.alt)).map((t) => t.videoId));
+  }
+
+  /** Index of the candidate whose name best matches `query` (exact > prefix > substring; ties keep search order). */
+  function pickScore(query, candidateName, groupName) {
+    const q = YTMO.utils.normalizeKey(query);
+    const g = YTMO.utils.normalizeKey(groupName || '');
+    const n = YTMO.utils.normalizeKey(candidateName);
+    let score = !q || !n ? 0 : n === q ? 3 : n.startsWith(q) || q.startsWith(n) ? 2 : n.includes(q) ? 1 : 0;
+    // A sub-unit/member page usually says so ("BSS(SEVENTEEN)", "WONWOO, MINGYU (SEVENTEEN)"); that beats an
+    // unrelated artist who merely shares the name ("BSS A Firma", "Mingyu Cho").
+    // (1.5, not 2: enough to beat a bare prefix match like "Mingyu Cho" but not an exact-name page like "WONWOO".)
+    if (score > 0 && g && n.includes(g)) score += 1.5;
+    return score;
+  }
+
+  function bestPick(query, candidates, groupName) {
+    let best = 0;
+    let bestScore = -1;
+    candidates.forEach((c, i) => {
+      const score = pickScore(query, c.name, groupName);
+      if (score > bestScore) {
+        best = i;
+        bestScore = score;
+      }
+    });
+    return best;
+  }
+
+  // ---------- member / cast lookup (opt-in) ----------
+
+  const lookupPage = () => {
+    const l = state.disc.lookup;
+    return l && l.status === 'done' ? l.pages[l.pick] || null : null;
+  };
+
+  /** The looked-up roster, if it is for the artist currently typed (a stale lookup for another name isn't applied). */
+  function discRosterIndex() {
+    const l = state.disc.lookup;
+    const page = lookupPage();
+    return page && YTMO.utils.normalizeKey(l.query) === YTMO.utils.normalizeKey(state.disc.artistQuery) ? YTMO.roster.indexPage(page) : null;
+  }
+
+  /** Group mode: fill the member box from the looked-up page (members, plus the sub-units it lists). Editable afterwards. */
+  function discApplyRosterToMembers() {
+    const d = state.disc;
+    const page = lookupPage();
+    if (!page || !d.includeSolo || d.franchise) return;
+    const names = [];
+    for (const m of page.members) if (m.names[0]) names.push(m.names[0]);
+    names.push(...page.units);
+    d.memberText = [...new Set(names)].join(', ');
+  }
+
+  /** Reads the roster for the typed name (see roster.js); resolves with the lookup status: 'done' | 'empty' | 'error'. */
+  async function discLookup() {
+    const d = state.disc;
+    const q = d.artistQuery.trim();
+    if (!q) {
+      d.error = 'Type an artist or group name first.';
+      render();
+      return 'error';
+    }
+    d.error = '';
+    d.lookup = { query: q, status: 'loading', pages: [], pick: 0, errors: [] };
+    render();
+    const res = await new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: 'YTMO_LOOKUP', query: q }, (r) => resolve(chrome.runtime.lastError ? { ok: false, error: chrome.runtime.lastError.message } : r || { ok: false, error: 'No response' }));
+      } catch (e) {
+        resolve({ ok: false, error: String(e.message || e) });
+      }
+    });
+    // "Extension context invalidated" = the extension was reloaded/updated after this tab opened; this tab still runs the
+    // old, orphaned copy of the script. Nothing is wrong with the extension — the tab just needs a refresh.
+    const orphaned = !YTMO.utils.alive() || /context invalidated|receiving end does not exist/i.test(res.error || '');
+    if (!res.ok) d.lookup = { query: q, status: 'error', pages: [], pick: 0, errors: [orphaned ? 'the extension was reloaded or updated since this tab opened. Reload this tab (F5) and try again.' : res.error] };
+    else d.lookup = { query: q, status: res.pages.length ? 'done' : 'empty', pages: res.pages, pick: 0, errors: res.errors || [] };
+    discApplyRosterToMembers();
+    render();
+    return d.lookup.status;
+  }
+
+  /**
+   * The whole flow behind one click: look up the roster, find the group and each member/unit on YouTube Music, read all
+   * their releases, follow the franchise's characters, and stop at the preview — the only point that needs the user (nothing
+   * is added until they say so). Stops early, with a message, if the lookup finds nothing: running unfiltered would bring
+   * back exactly the unrelated work the lookup exists to keep out.
+   */
+  async function discAuto() {
+    const d = state.disc;
+    const q = d.artistQuery.trim();
+    if (!q) {
+      d.error = 'Type an artist or group name first.';
+      return render();
+    }
+    d.error = '';
+    d.autoNote = null;
+    d.control = { cancelled: false };
+    d.phase = 'collecting';
+    d.progress = { done: 0, total: 0, label: 'Looking up the member / cast list online…' };
+    // Group: the looked-up members and sub-units are what we're about to search for. Franchise: the characters are found by
+    // following credits instead, so a leftover "include solo" tick (and the member names a previous group run put in the
+    // box) must not turn the franchise into a member search.
+    d.includeSolo = !d.franchise;
+    const fresh = d.lookup && d.lookup.status === 'done' && YTMO.utils.normalizeKey(d.lookup.query) === YTMO.utils.normalizeKey(q);
+    render();
+    if (!fresh && (await discLookup()) !== 'done') {
+      d.phase = 'idle'; // the form shows why (nothing found / error)
+      return render();
+    }
+    if (d.control.cancelled) {
+      d.phase = 'idle';
+      return render();
+    }
+    discApplyRosterToMembers();
+    if (!(await discSearch(true))) return;
+    if (d.control.cancelled) {
+      d.phase = 'resolved';
+      return render();
+    }
+    if (d.members.some((m) => m.review)) {
+      // Members it couldn't match with confidence: ask once, with all their candidates, instead of skipping them silently.
+      d.phase = 'resolved';
+      d.reviewOnly = true;
+      return render();
+    }
+    await discCollect();
+    if (d.phase === 'discovered' && !d.control.cancelled) {
+      // Franchise: the roster acts are ticked and go ahead on their own. Credited acts that aren't on the roster (a unit the
+      // Wikipedia article doesn't list, like MEZZO") get one look first; a voice actor's own pages never count as a question.
+      const open = d.discovered.filter((c) => !d.dxDone.has(c.browseId) && !d.dxPick.has(c.browseId) && d.kinds.get(c.browseId) !== 'actor');
+      if (open.length) {
+        d.autoPause = open.length;
+        return render();
+      }
+      await discExpand();
+    }
+  }
+
+  /** Classify every discovered act against the roster (or, without one, spot voice actors credited under their own name). */
+  function discRefreshKinds() {
+    const d = state.disc;
+    const idx = discRosterIndex();
+    const actorKeys = new Set();
+    if (!idx && discWork) for (const c of discWork.credits.values()) {
+      const cv = YTMO.roster.parseCredit(c.name);
+      if (cv && cv.actor) actorKeys.add(YTMO.utils.normalizeKey(cv.actor));
+    }
+    d.kinds = new Map(
+      d.discovered.map((c) => [c.browseId, idx ? YTMO.roster.classify(c.name, idx) : !catalog().isCharacterCredit(c.name) && actorKeys.has(YTMO.utils.normalizeKey(c.name)) ? 'actor' : null])
+    );
+  }
+
+  /** Whether a discovered act starts ticked. */
+  function discDefaultTick(c) {
+    const kind = state.disc.kinds.get(c.browseId);
+    if (kind === 'actor') return false; // a voice actor's own / other-role work isn't the franchise's
+    if (discRosterIndex()) return kind === 'cast' || kind === 'member' || kind === 'unit';
+    return catalog().isCharacterCredit(c.name) || c.releases >= 2;
+  }
+
+  /**
+   * Find the group and (when asked for) each member on YouTube Music. Manually this stops at the "Confirm the artists" step.
+   * With `auto` there is nobody to confirm, so it picks for them — strictly: a member is only accepted on an exact name
+   * match or a name that includes the group ("BSS(SEVENTEEN)"); anything weaker (a different "Jun Matsuoka") is skipped and
+   * reported rather than guessed. Resolves true when it went through.
+   */
+  async function discSearch(auto = false) {
+    const d = state.disc;
+    const q = d.artistQuery.trim();
+    if (!q) {
+      d.error = 'Type an artist or group name first.';
+      render();
+      return false;
+    }
+    d.error = '';
+    d.autoNote = null;
+    d.reviewOnly = false;
+    d.autoPause = 0;
+    if (!auto) d.phase = 'searching';
+    else d.progress = { done: 0, total: 0, label: 'Finding the group on YouTube Music…' };
+    render();
+    try {
+      const candidates = await catalog().searchArtists(q);
+      if (!candidates.length) throw new Error(`No artist found for “${q}”.`);
+      d.group = { candidates, pick: Math.max(0, bestPick(q, candidates)) };
+      d.members = [];
+      if (d.includeSolo) {
+        // Exclude only the group's own page (a "member" resolving to the group itself is useless) — NOT every artist the
+        // group search returned, which includes sub-units like BSS(SEVENTEEN) that are legitimate things to add.
+        const groupIds = new Set([d.group.candidates[d.group.pick].browseId]);
+        const names = parseMembers(d.memberText);
+        for (const [i, name] of names.entries()) {
+          if (auto) {
+            if (d.control.cancelled) break;
+            discProgress(i, names.length, `Finding ${name} on YouTube Music`);
+          }
+          // A bare first name ("Joshua", "Jun") mostly finds unrelated artists, so search "name + group" first
+          // (verified live: that surfaces the right member), then the bare name for ones that don't follow the pattern.
+          const merged = [];
+          for (const query of [`${name} ${q}`, name]) {
+            for (const c of await catalog().searchArtists(query)) if (!merged.some((m) => m.browseId === c.browseId)) merged.push(c);
+            await YTMO.utils.sleep(150);
+          }
+          const c = merged.filter((x) => !groupIds.has(x.browseId)).slice(0, 8);
+          let pick = c.length ? bestPick(name, c, q) : -1;
+          if (auto && pick >= 0 && pickScore(name, c[pick].name, q) < 3) pick = -1; // not sure enough to add without asking
+          const m = { query: name, candidates: c, pick };
+          // Unsure but there are candidates (a unit YouTube Music names "HxW" for Wikipedia's "Hoshi X Woozi"): the flow
+          // pauses once with every candidate offered as a checkbox, rather than guessing or dropping them.
+          if (auto && pick < 0 && c.length) {
+            m.review = true;
+            m.sel = new Set();
+          }
+          d.members.push(m);
+        }
+        d.autoNote = auto ? { skipped: d.members.filter((m) => m.pick < 0).map((m) => m.query), total: d.members.length } : null;
+      }
+      if (!auto) d.phase = 'resolved';
+      render();
+      return true;
+    } catch (e) {
+      d.error = e.message || String(e);
+      d.phase = 'idle';
+      render();
+      return false;
+    }
+  }
+
+  // The harvest in progress. Kept off `state` (large, never rendered): tracks merged by video id, releases already
+  // read (shared across artists so a franchise and its co-credited units don't re-fetch the same release), the credits
+  // seen on them, and running counters.
+  let discWork = null;
+
+  const discAddCredit = (c) => {
+    const x = discWork.credits.get(c.browseId);
+    if (x) x.releases += c.releases;
+    else discWork.credits.set(c.browseId, { ...c });
+  };
+
+  /** Collect `artists` into discWork. One at a time with per-release progress, or `concurrency` at a time with per-artist progress. */
+  async function discHarvest(artists, concurrency, labelPrefix = '') {
+    const d = state.disc;
+    const queue = [...artists];
+    let finished = 0;
+    const worker = async () => {
+      while (queue.length && !d.control.cancelled) {
+        const artist = queue.shift();
+        const idx = artists.length - queue.length;
+        const prefix = artists.length > 1 && concurrency === 1 ? `(${idx}/${artists.length}) ` : '';
+        try {
+          const { tracks, stats, credits } = await catalog().collectArtist(artist, {
+            control: d.control,
+            seen: discWork.seen,
+            onStep: concurrency === 1 ? (done, total, label) => discProgress(done, total, prefix + label) : undefined,
+          });
+          for (const t of tracks) {
+            const prev = discWork.merged.get(t.videoId);
+            if (prev) for (const v of t.via) prev.via.includes(v) || prev.via.push(v);
+            else discWork.merged.set(t.videoId, t);
+          }
+          credits.forEach(discAddCredit);
+          discWork.failedReleases += stats.failedReleases;
+          discWork.releases += stats.releases - stats.reused;
+        } catch (_) {
+          discWork.failedReleases++;
+        }
+        finished++;
+        if (concurrency > 1) discProgress(finished, artists.length, labelPrefix + artist.name);
+      }
+    };
+    await Promise.all(Array.from({ length: concurrency }, worker));
+  }
+
+  async function discCollect() {
+    const d = state.disc;
+    const picks = [d.group.candidates[d.group.pick]];
+    for (const m of d.members) {
+      if (m.sel) for (const i of m.sel) m.candidates[i] && picks.push(m.candidates[i]); // a "review" member: any number of candidates
+      else if (m.pick >= 0 && m.candidates[m.pick]) picks.push(m.candidates[m.pick]);
+    }
+    d.reviewOnly = false; // Back from the preview shows the full list, not just the questions
+    // What's still unmatched now that the review (if any) has been answered, for the preview's note.
+    if (d.autoNote) d.autoNote.skipped = d.members.filter((m) => (m.sel ? m.sel.size === 0 : m.pick < 0)).map((m) => m.query);
+    const artists = picks.filter((a, i) => a && picks.findIndex((b) => b && b.browseId === a.browseId) === i);
+    d.error = '';
+    d.phase = 'collecting';
+    d.control = { cancelled: false };
+    d.progress = { done: 0, total: 0, label: 'Starting…' };
+    d.discovered = [];
+    render();
+    try {
+      discWork = { merged: new Map(), seen: new Set(), credits: new Map(), releases: 0, failedReleases: 0, mainIds: new Set(artists.map((a) => a.browseId)) };
+      await discHarvest(artists, 1);
+      if (d.control.cancelled) {
+        d.phase = 'resolved';
+        return render();
+      }
+      if (d.franchise) {
+        // Everyone else credited on what we just read: the franchise's units and characters. A character credit
+        // ("Name(CV.Actor)") is a strong franchise signal even at one release, so those start ticked; other acts
+        // need 2+ releases, since single-release credits are often one-off guests with unrelated catalogs.
+        d.discovered = [...discWork.credits.values()].filter((c) => !discWork.mainIds.has(c.browseId)).sort((a, b) => b.releases - a.releases || a.name.localeCompare(b.name));
+        discRefreshKinds();
+        d.dxPick = new Set(d.discovered.filter(discDefaultTick).map((c) => c.browseId));
+        d.dxDone = new Set();
+        if (d.discovered.length) {
+          d.phase = 'discovered';
+          return render();
+        }
+      }
+      await discFinish();
+    } catch (e) {
+      d.error = e.message || String(e);
+      d.phase = 'resolved';
+      render();
+    }
+  }
+
+  const DISC_MAX_FOLLOW = 150; // safety cap on characters followed automatically in one run
+
+  /**
+   * Collect `initial`, then keep following the characters credited on whatever that turned up, until none are new.
+   * Characters are linked to each other through co-credits, so this walks a franchise's whole cast: verified on
+   * IDOLiSH7 — the franchise page credits only 5 of its 16 characters, and one round of following reached the
+   * rest (Tenn, Gaku, Momo, Yuki, Tamaki, Sogo…) with nothing from other franchises. Only *new, character-style*
+   * credits are followed: guests/orchestras/composers aren't, and acts the user already saw and unticked aren't.
+   * Other newly credited acts are added to the list for manual ticking.
+   */
+  async function discHarvestRounds(initial) {
+    const d = state.disc;
+    initial.forEach((a) => d.dxDone.add(a.browseId));
+    let queue = initial;
+    let round = 0;
+    let followed = 0;
+    // With a looked-up roster only characters on it are followed; any other character goes to the manual list.
+    const idx = discRosterIndex();
+    const follow = (c) => catalog().isCharacterCredit(c.name) && (!idx || YTMO.roster.classify(c.name, idx) === 'cast');
+    while (queue.length && !d.control.cancelled) {
+      const known = new Set(discWork.credits.keys());
+      d.progress = { done: 0, total: queue.length, label: round ? `Following characters (round ${round})…` : 'Starting…' };
+      await discHarvest(queue, 3, round ? `Round ${round}: ` : '');
+      if (d.control.cancelled) break;
+      const fresh = [...discWork.credits.values()].filter((c) => !known.has(c.browseId) && !discWork.mainIds.has(c.browseId) && !d.dxDone.has(c.browseId));
+      for (const c of fresh) if (!follow(c) && !d.discovered.some((x) => x.browseId === c.browseId)) d.discovered.push(c);
+      queue = fresh
+        .filter(follow)
+        .slice(0, Math.max(0, DISC_MAX_FOLLOW - followed))
+        .map((c) => ({ browseId: c.browseId, name: c.name }));
+      queue.forEach((a) => d.dxDone.add(a.browseId));
+      followed += queue.length;
+      round++;
+    }
+    discWork.followed = (discWork.followed || 0) + followed;
+    discRefreshKinds();
+  }
+
+  /** Franchise mode: collect the ticked units/characters too (their releases already read are skipped), following new characters. */
+  async function discExpand() {
+    const d = state.disc;
+    const chosen = d.discovered.filter((c) => d.dxPick.has(c.browseId) && !d.dxDone.has(c.browseId)).map((c) => ({ browseId: c.browseId, name: c.name }));
+    d.autoPause = 0;
+    if (!chosen.length) return discFinish();
+    d.error = '';
+    d.phase = 'collecting';
+    d.control = { cancelled: false };
+    d.progress = { done: 0, total: chosen.length, label: 'Starting…' };
+    render();
+    try {
+      await discHarvestRounds(chosen);
+      if (d.control.cancelled) {
+        d.phase = 'discovered';
+        return render();
+      }
+      await discFinish();
+    } catch (e) {
+      d.error = e.message || String(e);
+      d.phase = 'discovered';
+      render();
+    }
+  }
+
+  /** Classify what was harvested against the target playlist and open the preview. */
+  async function discFinish() {
+    const d = state.disc;
+    // What the target playlist already has — read live from YTM (not from a possibly-stale or never-run scan).
+    let existing = null;
+    if (state.page === 'playlist' && state.playlistId) {
+      try {
+        existing = catalog().existingFrom(await catalog().getPlaylistTracks(state.playlistId));
+      } catch (_) {
+        existing = state.tracks.length ? catalog().existingFrom(state.tracks) : null;
+      }
+    }
+    d.tracks = catalog().classify([...discWork.merged.values()], existing);
+    const rosterPage = discRosterIndex() ? lookupPage() : null;
+    d.summary = {
+      releases: discWork.releases,
+      failedReleases: discWork.failedReleases,
+      followed: discWork.followed || 0,
+      roster: rosterPage ? `${rosterPage.source}: ${rosterPage.title}` : '',
+      // Credited acts that were seen but never collected (unticked: not on the roster, voice actors…) — Back brings them up.
+      skippedActs: d.franchise ? d.discovered.filter((c) => !d.dxDone.has(c.browseId)).length : 0,
+    };
+    if (!d.newName) d.newName = `${discGroupName()} — all songs`;
+    discSelectDefault();
+    d.phase = 'preview';
+    render();
+  }
+
+  async function discAdd() {
+    const d = state.disc;
+    const ids = d.tracks.filter((t) => d.picked.has(t.videoId)).map((t) => t.videoId);
+    if (!ids.length) return;
+    const useCurrent = discTarget() === 'current';
+    const name = d.newName.trim() || `${discGroupName()} — all songs`;
+    const ok = await modal(
+      `Add ${ids.length} song${ids.length === 1 ? '' : 's'}?`,
+      `<div class="muted">${
+        useCurrent
+          ? `These will be added to the end of “${h(state.header.title || 'this playlist')}”. Songs it already has are skipped.`
+          : `This creates a new <b>private</b> playlist called “${h(name)}” with these songs. You can change its privacy on YouTube Music afterwards.`
+      } Adding goes in small paced batches and can be stopped, but songs already added stay added.</div>`,
+      'Add'
+    );
+    if (!ok) return;
+    d.error = '';
+    d.phase = 'adding';
+    d.control = { cancelled: false };
+    d.progress = { done: 0, total: ids.length, label: useCurrent ? 'Adding…' : 'Creating playlist…' };
+    render();
+    try {
+      let playlistId = state.playlistId;
+      let toAdd = ids;
+      let alreadyThere = 0;
+      if (useCurrent) {
+        // YTM ignores its own "skip duplicates" flag when adding, so drop what's already there ourselves —
+        // against the playlist as it is right now, in case it changed since the preview was built.
+        const have = new Set((await catalog().getPlaylistTracks(playlistId)).map((t) => t.videoId));
+        toAdd = ids.filter((id) => !have.has(id));
+        alreadyThere = ids.length - toAdd.length;
+      } else {
+        playlistId = await catalog().createPlaylist(name);
+      }
+      const res = await catalog().addVideos(playlistId, toAdd, {
+        control: d.control,
+        onProgress: (done, total, r) => discProgress(done, total, `${r.added} added${r.failed.length ? `, ${r.failed.length} failed` : ''}`),
+      });
+      res.skipped += alreadyThere;
+      d.result = { ...res, playlistId, created: !useCurrent, name, requested: ids.length };
+      d.phase = 'done';
+    } catch (e) {
+      d.error = e.message || String(e);
+      d.phase = 'preview';
+    }
+    render();
+  }
+
+  function discToggleGroup(key, on) {
+    const d = state.disc;
+    const g = catalog().groupByRelease(d.tracks).find((x) => x.key === key);
+    if (!g) return;
+    for (const t of g.tracks) (on ? d.picked.add(t.videoId) : d.picked.delete(t.videoId));
+    render();
+  }
+
+  function discBack() {
+    const d = state.disc;
+    d.error = '';
+    d.autoPause = 0;
+    d.reviewOnly = false;
+    // One step back along the way we came: preview -> (discovered, if franchise mode found any) -> resolved -> idle.
+    d.phase = d.phase === 'preview' ? (d.franchise && d.discovered.length ? 'discovered' : 'resolved') : d.phase === 'discovered' ? 'resolved' : 'idle';
     render();
   }
 
@@ -727,6 +1265,8 @@
       switch (act) {
         case 'close':
           return setOpen(false);
+        case 'toggle-full':
+          return setFull(!state.full);
         case 'scan':
           return scan();
         case 'dates':
@@ -757,6 +1297,45 @@
           return removeSelected();
         case 'apply-order':
           return applySortToPlaylist();
+        case 'disc-search':
+          return discSearch();
+        case 'disc-lookup':
+          return discAuto();
+        case 'disc-collect':
+          return discCollect();
+        case 'disc-add':
+          return discAdd();
+        case 'disc-back':
+          return discBack();
+        case 'disc-expand':
+          return discExpand();
+        case 'disc-skip-expand':
+          return discFinish();
+        case 'disc-x-all':
+          state.disc.dxPick = new Set(state.disc.discovered.filter((c) => state.disc.kinds.get(c.browseId) !== 'actor').map((c) => c.browseId));
+          return render();
+        case 'disc-cand-all':
+        case 'disc-cand-none':
+          for (const m of state.disc.members) if (m.review) m.sel = new Set(act === 'disc-cand-all' ? m.candidates.map((_, i) => i) : []);
+          return render();
+        case 'disc-x-none':
+          state.disc.dxPick = new Set();
+          return render();
+        case 'disc-x-units':
+          state.disc.dxPick = new Set(state.disc.discovered.filter((c) => !catalog().isCharacterCredit(c.name)).map((c) => c.browseId));
+          return render();
+        case 'disc-cancel':
+          if (state.disc.control) state.disc.control.cancelled = true;
+          return;
+        case 'disc-all':
+          state.disc.picked = new Set(state.disc.tracks.map((t) => t.videoId));
+          return render();
+        case 'disc-none':
+          state.disc.picked = new Set();
+          return render();
+        case 'disc-originals':
+          discSelectDefault(true);
+          return render();
         case 'cancel':
           if (state.batch) state.batch.control.cancelled = true;
           return setProgress('Stopping…', state.progress?.pct);
@@ -782,6 +1361,34 @@
     if (tab) {
       state.tab = tab;
       if (tab === 'library') refreshLibrary();
+      return render();
+    }
+    const dsel = e.target.closest('[data-dsel]');
+    if (dsel) {
+      if (dsel.checked) state.disc.picked.add(dsel.dataset.dsel);
+      else state.disc.picked.delete(dsel.dataset.dsel);
+      return render();
+    }
+    const dcand = e.target.closest('[data-dcand]');
+    if (dcand) {
+      const sel = state.disc.members[parseInt(dcand.dataset.dm, 10)].sel;
+      const i = parseInt(dcand.dataset.dcand, 10);
+      if (dcand.checked) sel.add(i);
+      else sel.delete(i);
+      return render();
+    }
+    const dx = e.target.closest('[data-dx]');
+    if (dx) {
+      if (dx.checked) state.disc.dxPick.add(dx.dataset.dx);
+      else state.disc.dxPick.delete(dx.dataset.dx);
+      return render();
+    }
+    const dgrp = e.target.closest('[data-dgrp]');
+    if (dgrp) return discToggleGroup(dgrp.dataset.dgrp, dgrp.checked);
+    const dopt = e.target.closest('[data-dopt]');
+    if (dopt) {
+      state.disc[dopt.dataset.dopt] = dopt.checked;
+      if (dopt.dataset.dopt === 'includeSolo' && dopt.checked && !state.disc.memberText.trim()) discApplyRosterToMembers();
       return render();
     }
     const chk = e.target.closest('[data-chk]');
@@ -867,17 +1474,40 @@
     } else if (k === 'tagfilter') {
       state.libraryTagFilter = e.target.value;
       render();
+    } else if (k === 'disc-artist') {
+      state.disc.artistQuery = e.target.value; // no render: it would steal focus mid-typing
+    } else if (k === 'disc-members') {
+      state.disc.memberText = e.target.value;
+    } else if (k === 'disc-newname') {
+      state.disc.newName = e.target.value;
+    } else if (k === 'disc-target') {
+      state.disc.target = e.target.value;
+      render();
+    } else if (k === 'disc-lookup-pick') {
+      state.disc.lookup.pick = parseInt(e.target.value, 10) || 0;
+      discApplyRosterToMembers();
+      render();
+    } else if (k === 'disc-pick') {
+      const pick = parseInt(e.target.value, 10);
+      const i = e.target.dataset.i;
+      if (i === 'g') state.disc.group.pick = pick;
+      else state.disc.members[parseInt(i, 10)].pick = pick;
     }
   }
 
   function onKeydown(e) {
+    if (e.target.dataset.in === 'disc-artist' && e.key === 'Enter') {
+      e.preventDefault();
+      discAuto();
+    }
     if (e.target.dataset.in === 'newtag' && (e.key === 'Enter' || e.key === ',')) {
       e.preventDefault();
       const v = e.target.value;
       e.target.value = '';
       addTag(v);
     }
-    if (e.key === 'Escape' && state.open && !els.wrap.querySelector('.modal-bg')) setOpen(false);
+    // Esc backs out one level at a time: an open dialog handles its own, then full-window -> side panel -> closed.
+    if (e.key === 'Escape' && state.open && !els.wrap.querySelector('.modal-bg')) state.full ? setFull(false) : setOpen(false);
     e.stopPropagation(); // keep the host site's keyboard shortcuts (space = play) from firing while typing
   }
 
@@ -885,8 +1515,24 @@
 
   function setOpen(open) {
     state.open = open;
+    // Closing always returns to the docked size, so the edge tab and the next open aren't left covering the page.
+    if (!open) state.full = false;
     els.wrap.classList.toggle('open', open);
+    els.wrap.classList.toggle('full', state.full);
     if (open) render();
+  }
+
+  function setFull(on) {
+    state.full = on;
+    els.wrap.classList.toggle('full', on);
+    render();
+    // render() rebuilds the header, dropping focus from the button that was just used. Keep it inside the panel so the
+    // next Esc still reaches it (otherwise "Esc: full window -> side panel -> closed" stops after the first step).
+    if (!root.activeElement) {
+      els.wrap.tabIndex = -1;
+      els.wrap.style.outline = 'none';
+      els.wrap.focus({ preventScroll: true });
+    }
   }
 
   function layout() {
@@ -927,19 +1573,36 @@
   }
 
   async function init() {
-    if (document.getElementById('ytmo-host')) return;
+    if (!YTMO.utils.alive() || document.getElementById('ytmo-host')) return;
     host = document.createElement('div');
     host.id = 'ytmo-host';
     document.documentElement.appendChild(host);
     root = host.attachShadow({ mode: 'open' });
 
-    // cache: 'no-store' — chrome-extension:// URLs can otherwise still serve an HTTP-cached
-    // response after the extension reloads with a changed file on disk, unlike content
-    // scripts (always re-injected fresh); confirmed live, this was silently serving stale CSS.
-    const [themeCss, panelCss] = await Promise.all([
-      fetch(chrome.runtime.getURL('src/content/theme.css'), { cache: 'no-store' }).then((r) => r.text()),
-      fetch(chrome.runtime.getURL('src/content/panel.css'), { cache: 'no-store' }).then((r) => r.text()),
-    ]);
+    // The stylesheets are read by the background worker (no-store, so a reload with changed files never serves stale CSS),
+    // not fetched from here: a content-script fetch of chrome-extension:// URLs runs as the page, and when the browser
+    // refuses it logs "Unsafe attempt to load URL …/theme.css from frame with URL https://music.youtube.com/…" itself,
+    // straight into the Errors list, whatever we catch. A failed message just comes back empty.
+    const getCss = () =>
+      new Promise((resolve) => {
+        try {
+          chrome.runtime.sendMessage({ type: 'YTMO_GET_CSS' }, (r) => resolve(chrome.runtime.lastError || !r || !r.ok ? null : r.css));
+        } catch (_) {
+          resolve(null); // extension context already gone (reloaded under this tab)
+        }
+      });
+    let css = await getCss();
+    if (!css && YTMO.utils.alive()) {
+      await YTMO.utils.sleep(1000); // the worker may still be waking up
+      css = await getCss();
+    }
+    if (!css) {
+      // An unstyled, half-built panel is worse than none until the tab is reloaded.
+      host.remove();
+      console.warn('[Playlist Organizer] could not load its stylesheets — reload this tab.');
+      return;
+    }
+    const [themeCss, panelCss] = css;
     setHTML(
       root,
       `<style>${themeCss}</style><style>${panelCss}</style>
@@ -958,6 +1621,15 @@
     els.wrap.addEventListener('input', onInput);
     els.wrap.addEventListener('change', onInput);
     els.wrap.addEventListener('keydown', onKeydown);
+    // The panel only sees keys while focus is inside it. Full-window covers the whole page, so there Esc should work
+    // wherever focus happens to be (e.g. after clicking blank space, which focuses the page behind). Docked, Esc is left
+    // to the host site.
+    document.addEventListener('keydown', (e) => {
+      // isTrusted: the automation's own synthetic Escapes (closing YTM's menus mid-"Add to playlist") must not count.
+      if (!e.isTrusted || e.key !== 'Escape' || !state.open || !state.full || !YTMO.utils.alive()) return;
+      if (e.composedPath().includes(els.wrap) || els.wrap.querySelector('.modal-bg')) return;
+      setFull(false);
+    });
     els.wrap.addEventListener('dragstart', onDragStart);
     els.wrap.addEventListener('dragover', onDragOver);
     els.wrap.addEventListener('drop', onDrop);
@@ -979,8 +1651,8 @@
     });
 
     layout();
-    setInterval(layout, 2000);
-    setInterval(liveRefreshTick, 1500);
+    YTMO.utils.every(layout, 2000);
+    YTMO.utils.every(liveRefreshTick, 1500);
     window.addEventListener('resize', layout);
     await onPageChange();
     dom.onNavigate(onPageChange);

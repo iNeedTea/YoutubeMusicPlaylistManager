@@ -272,7 +272,7 @@
       }
     };
     window.addEventListener('popstate', () => setTimeout(fire, 50));
-    setInterval(fire, 700);
+    YTMO.utils.every(fire, 700);
   }
 
   function getLayoutInsets() {
@@ -461,7 +461,7 @@
     trackIdLabel: 'Track ID',
     scanHint:
       'Spotify only loads more tracks as you scroll — clicking Scan starts collecting and makes a best-effort attempt to advance the list, but for long playlists you may need to scroll down manually while this panel is open. The count below updates live.',
-    capabilities: { autoScroll: false, releaseDates: false, dateAdded: true, libraryPage: false, removeVerified: false, addVerified: false, physicalReorder: false },
+    capabilities: { autoScroll: false, releaseDates: false, dateAdded: true, libraryPage: false, removeVerified: false, addVerified: false, physicalReorder: false, catalogAdd: false },
     getPageType,
     getPlaylistId,
     getPlaylistHeader,
