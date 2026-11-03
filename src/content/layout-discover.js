@@ -8,25 +8,22 @@
 
   const names = (t) => (t.artists && t.artists.length ? t.artists.join(', ') : '');
 
+  // The five stops of the flow, shown at the top of every view so it's clear where you are and what comes next.
+  const STEPS = ['Look up artists', 'Artists found', 'Find songs', 'Songs found', 'Add to playlist'];
+  const stepper = (h, current) =>
+    `<ol class="lo-disc-steps">${STEPS.map((s, i) => `<li class="${i + 1 < current ? 'done' : i + 1 === current ? 'cur' : ''}"><span class="lo-disc-stepn">${i + 1}</span>${h(s)}</li>`).join('')}</ol>`;
+
   function setupForm(ctx, busy) {
     const { h, state } = ctx;
     const d = state.disc;
-    const members = d.includeSolo
-      ? `<textarea class="input lo-textarea lo-disc-input" rows="2" data-in="disc-members" placeholder="Member / sub-unit names, comma-separated — e.g. S.Coups, Jeonghan, Joshua, Jun, Hoshi, Wonwoo, Woozi, DK, Mingyu, The8, Seungkwan, Vernon, Dino, BSS, JxW">${h(d.memberText)}</textarea>
-         <div class="muted lo-hint">Each name is looked up as an artist, and you confirm the match before anything is collected — common names (Joshua, Jun…) often match the wrong person. A member's list includes songs they're only credited on as a collaborator or feature. Sub-units (e.g. BSS) have their own artist pages, so add them here too.</div>`
-      : '';
     return `<div class="lo-section lo-disc">
+      ${stepper(h, 1)}
       <b>Add music by artist</b>
-      <div class="muted lo-hint">Collects every song YouTube Music lists for an artist — all albums, singles and EPs plus their song list — so you can review it before anything is added. Uses YouTube Music's own catalog, so only real songs appear; some very old or region-locked releases may be missing.</div>
+      <div class="muted lo-hint">Step by step: look up the artists, check the list found, find their songs, review the songs, then add them to a playlist. Uses YouTube Music's own catalog, so only real songs appear (all albums, singles and EPs plus each artist's song list); some very old or region-locked releases may be missing. Nothing is added until the last step.</div>
       <input type="text" class="input lo-disc-input" data-in="disc-artist" placeholder="Artist or group (e.g. Seventeen)" value="${h(d.artistQuery)}" ${busy ? 'disabled' : ''}>
-      <label class="lo-disc-check"><input type="checkbox" data-dopt="includeSolo" ${d.includeSolo ? 'checked' : ''}> Include solo artists' work (members and sub-units)</label>
-      ${members}
-      <label class="lo-disc-check"><input type="checkbox" data-dopt="franchise" ${d.franchise ? 'checked' : ''}> Franchise mode — also collect every unit and character credited on its releases</label>
-      ${d.franchise ? '<div class="muted lo-hint">For a game/anime franchise (e.g. Ensemble Stars!!, IDOLiSH7) search the franchise\'s own artist page. After reading it you\'ll see every group and character credited on its releases, and can tick which of them to collect in full too — that catches solo character songs and unit releases the franchise page doesn\'t list.</div>' : ''}
-      <label class="lo-disc-check"><input type="checkbox" data-dopt="includeAlt" ${d.includeAlt ? 'checked' : ''}> Include alternate versions (instrumentals, remixes, other-language versions)</label>
       ${lookupRow(ctx, busy)}
       ${d.error ? `<div class="lo-disc-error">${h(d.error)}</div>` : ''}
-      <div class="lo-disc-actions"><button class="btn btn-secondary" data-act="disc-search" ${busy ? 'disabled' : ''} title="Search YouTube Music for this artist only — no online lookup, you confirm each match yourself">${busy ? 'Searching…' : 'Find artist only'}</button></div>
+      <div class="lo-disc-actions"><button class="btn btn-secondary" data-act="disc-search" ${busy ? 'disabled' : ''} title="Skip the online lookup: search YouTube Music for this artist only, without its members or franchise cast">${busy ? 'Searching…' : 'Find artist only'}</button></div>
     </div>`;
   }
 
@@ -47,12 +44,14 @@
           ? `<select class="input lo-disc-sel" data-in="disc-lookup-pick">${l.pages.map((x, i) => `<option value="${i}" ${i === l.pick ? 'selected' : ''}>${h(x.source)}: ${h(x.title)} — ${x.members.length} names</option>`).join('')}</select>`
           : '';
       result = `${sel}<div class="muted lo-hint">${stale ? 'This lookup is for “' + h(l.query) + '” — look up again for the current name. ' : ''}Using <a href="${h(p.url)}" target="_blank" rel="noopener">${h(p.source)}: ${h(p.title)}</a> — ${p.members.length} members/characters${p.units.length ? ' in ' + p.units.length + ' units' : ''}. ${
-        d.franchise ? 'Only acts matching this list will be ticked and followed automatically; everything else is listed unticked.' : 'The names were filled into the member box above — edit them if needed.'
+        d.franchise
+          ? 'This looks like a franchise (characters with voice actors): its units and characters are found from the credits on its releases, and only acts matching this list are ticked and followed automatically.'
+          : 'This looks like a group: its members and sub-units are searched for on YouTube Music.'
       }</div>`;
     }
     return `<div class="lo-disc-lookup">
-      <button class="btn btn-primary" data-act="disc-lookup" ${busy || (l && l.status === 'loading') ? 'disabled' : ''}>Look up members &amp; find all music</button>
-      <div class="muted lo-hint">One click: reads the real member / character list from Wikipedia and MusicBrainz (this sends the name typed above to them — nothing is sent unless you click), finds each member, unit and character on YouTube Music, and collects their songs, leaving out voice actors' and other artists' unrelated work. You review everything in a preview before anything is added. ${d.franchise ? '' : 'For a group, its members and sub-units are included automatically.'}</div>
+      <button class="btn btn-primary" data-act="disc-lookup" ${busy || (l && l.status === 'loading') ? 'disabled' : ''}>Look up artists</button>
+      <div class="muted lo-hint">Reads the real member / character list from Wikipedia and MusicBrainz (this sends the name typed above to them — nothing is sent unless you click) and finds each member and unit on YouTube Music. You then check the list of artists found before any songs are collected, which keeps voice actors' and other artists' unrelated work out. Whether it's a group (members and sub-units) or a game/anime franchise (units and characters) is worked out from the lookup.</div>
       ${result}
     </div>`;
   }
@@ -67,45 +66,39 @@
     const d = state.disc;
     // Members the one-click flow couldn't match with confidence: every candidate as a checkbox (a unit Wikipedia calls
     // "Hoshi X Woozi" is "HxW" here), none ticked until you say so.
-    const reviewRow = (m, i) => `<div class="lo-disc-pickrow lo-disc-review"><span class="lo-disc-pickname">${h(m.query)}</span><div class="lo-disc-cands">${m.candidates
-      .map((c, n) => `<label class="lo-disc-row"><input type="checkbox" data-dcand="${n}" data-dm="${i}" ${m.sel.has(n) ? 'checked' : ''}><span class="lo-disc-title">${h(c.name)}</span><span class="muted lo-disc-meta">${h(c.subtitle || '')}</span></label>`)
-      .join('')}</div></div>`;
+    const candRow = (m, i, c, n) =>
+      `<label class="lo-disc-row"><input type="checkbox" data-dcand="${n}" data-dm="${i}" ${m.sel.has(n) ? 'checked' : ''}><span class="lo-disc-title">${h(c.name)}</span><span class="muted lo-disc-meta">${h(c.subtitle || '')}</span></label>`;
+    // Every member is a checkbox list of what YouTube Music offered for the name. A confident match is shown on its own with
+    // the other candidates tucked under "other matches" (opened when one of them is ticked); a doubtful one lists them all.
     const memberRows = d.members
-      .map((m, i) =>
-        m.review
-          ? reviewRow(m, i)
-          : d.reviewOnly
-            ? ''
-            : `<div class="lo-disc-pickrow"><span class="lo-disc-pickname">${h(m.query)}</span>${
-                m.candidates.length ? candSelect(h, m.candidates, m.pick, String(i)) : '<span class="muted">No artist found — will be skipped</span>'
-              }</div>`
-      )
+      .map((m, i) => {
+        if (!m.candidates.length) return `<div class="lo-disc-pickrow"><span class="lo-disc-pickname">${h(m.query)}</span><span class="muted">No artist found on YouTube Music — will be skipped</span></div>`;
+        const shown = m.review || m.pick < 0 ? m.candidates.map((_, n) => n) : [m.pick];
+        const rest = m.candidates.map((_, n) => n).filter((n) => !shown.includes(n));
+        return `<div class="lo-disc-pickrow lo-disc-review"><span class="lo-disc-pickname">${h(m.query)}</span><div class="lo-disc-cands">${shown.map((n) => candRow(m, i, m.candidates[n], n)).join('')}${
+          rest.length ? `<details ${rest.some((n) => m.sel.has(n)) ? 'open' : ''}><summary class="muted">${rest.length} other match${rest.length === 1 ? '' : 'es'}</summary>${rest.map((n) => candRow(m, i, m.candidates[n], n)).join('')}</details>` : ''
+        }</div></div>`;
+      })
       .join('');
-    if (d.reviewOnly) {
-      const matched = d.members.filter((m) => !m.review && m.pick >= 0).length;
-      const unfound = d.members.filter((m) => !m.review && m.pick < 0).map((m) => m.query);
-      const ticked = d.members.reduce((n, m) => n + (m.sel ? m.sel.size : 0), 0);
-      return `<div class="lo-section lo-disc">
-        <b>${d.members.filter((m) => m.review).length} to check before collecting</b>
-        <div class="muted lo-hint">${matched} of ${d.members.length} members and units were matched on YouTube Music automatically${d.artistQuery ? ` (roster from the lookup for “${h(d.artistQuery)}”)` : ''}. These weren't an exact match, so nothing is guessed: tick whichever candidates belong (e.g. “HxW” for “Hoshi X Woozi”, or “CxM (SEVENTEEN)” for “S.Coups X Mingyu”) — or none to leave them out.${unfound.length ? ` No YouTube Music artist at all for: ${h(unfound.join(', '))}.` : ''}</div>
-        <div class="lo-disc-actions">
-          <button class="btn btn-primary" data-act="disc-collect">${ticked ? `Collect with ${ticked} ticked` : 'Collect without them'}</button>
-          <button class="btn btn-secondary" data-act="disc-cand-all">Tick every candidate</button>
-          <button class="btn btn-secondary" data-act="disc-cand-none">None</button>
-          <button class="btn btn-secondary" data-act="disc-back">Back</button>
-        </div>
-        ${d.error ? `<div class="lo-disc-error">${h(d.error)}</div>` : ''}
-        ${memberRows}
-      </div>`;
-    }
+    const reviewing = d.members.filter((m) => m.review).length;
+    const matched = d.members.filter((m) => !m.review && m.pick >= 0).length;
+    const ticked = d.members.reduce((n, m) => n + (m.sel ? m.sel.size : 0), 0);
+    const artists = 1 + ticked;
+    const lookedUp = d.lookup && d.lookup.status === 'done' && YTMO.utils.normalizeKey(d.lookup.query) === YTMO.utils.normalizeKey(d.artistQuery);
     return `<div class="lo-section lo-disc">
-      <b>Confirm the artists</b>
-      <div class="muted lo-hint">Pick the right match for each. Compare the audience numbers — the real one is usually the biggest, and unrelated artists with the same name do show up (searching “Seventeen” also finds an Indonesian band).</div>
+      ${stepper(h, 2)}
+      <b>Artists found</b>
+      <div class="muted lo-hint">${
+        d.members.length
+          ? `${matched} of ${d.members.length} members and units matched on YouTube Music${lookedUp ? ` (names from the lookup for “${h(d.artistQuery)}”)` : ''}. Untick any that look wrong — compare the audience numbers, since unrelated artists with the same name do show up.${reviewing ? ` ${reviewing} ${reviewing === 1 ? "wasn't an exact match, so it lists" : "weren't exact matches, so they list"} every candidate instead: tick whichever belong (e.g. “HxW” for “Hoshi X Woozi”) or none to leave ${reviewing === 1 ? 'it' : 'them'} out.` : ''}`
+          : `Pick the right match — compare the audience numbers, since unrelated artists with the same name do show up (searching “Seventeen” also finds an Indonesian band).${d.franchise ? ' “Find songs” reads this artist’s releases again and lists the units and characters credited on them for you to tick.' : ''}`
+      }</div>
       <div class="lo-disc-pickrow"><span class="lo-disc-pickname">${h(d.artistQuery)}</span>${candSelect(h, d.group.candidates, d.group.pick, 'g')}</div>
       ${memberRows}
       ${d.error ? `<div class="lo-disc-error">${h(d.error)}</div>` : ''}
       <div class="lo-disc-actions">
-        <button class="btn btn-primary" data-act="disc-collect">Find songs</button>
+        <button class="btn btn-primary" data-act="disc-collect">Find songs${artists > 1 ? ` for ${artists} artists` : ''}</button>
+        ${d.members.some((m) => m.candidates.length) ? '<button class="btn btn-secondary" data-act="disc-cand-all">Tick every candidate</button><button class="btn btn-secondary" data-act="disc-cand-none">None</button>' : ''}
         <button class="btn btn-secondary" data-act="disc-back">Back</button>
       </div>
     </div>`;
@@ -132,15 +125,25 @@
     const sorted = [...d.discovered].sort((a, b) => b.releases - a.releases || a.name.localeCompare(b.name));
     const groups = sorted.filter((c) => !isChar(c.name));
     const chars = sorted.filter((c) => isChar(c.name));
+    // The section header's checkbox ticks / unticks every act in it that isn't already collected.
+    const section = (key, title, list) => {
+      if (!list.length) return '';
+      const open = list.filter((c) => !done(c));
+      const all = open.length > 0 && open.every((c) => d.dxPick.has(c.browseId));
+      return `<div class="lo-disc-grp"><input type="checkbox" data-dxsec="${key}" ${all ? 'checked' : ''} ${open.length ? '' : 'disabled'} title="Tick / untick every act in this section"><b>${title}</b><span class="muted">${list.length}</span></div>${list.map(row).join('')}`;
+    };
     const ticked = d.discovered.filter((c) => d.dxPick.has(c.browseId) && !done(c)).length;
+    // With a roster: credited acts it doesn't list (often a unit the article misses, like MEZZO") deserve a look; voice actors don't count.
+    const offRoster = hasRoster ? d.discovered.filter((c) => !done(c) && !d.dxPick.has(c.browseId) && d.kinds.get(c.browseId) !== 'actor').length : 0;
     return `<div class="lo-disc">
       <div class="lo-disc-bar">
-        <b>${d.autoPause ? `${d.autoPause} credited act${d.autoPause === 1 ? '' : 's'} to check` : 'Units and characters found'}</b>
-        ${d.autoPause ? `<div class="muted lo-hint"><b>Everything on the roster is already ticked and goes ahead.</b> ${d.autoPause} other act${d.autoPause === 1 ? ' is' : 's are'} credited on these releases but ${d.autoPause === 1 ? "isn't" : "aren't"} on the Wikipedia roster — often a unit the article doesn't list. Tick any that belong, then collect; leave the rest unticked to skip them.</div>` : ''}
-        <div class="muted lo-hint">${d.discovered.length} other act${d.discovered.length === 1 ? '' : 's'} credited on ${h(discGroupLabel(d))}'s releases. Tick the ones to collect in full — releases already read are skipped, so this mainly adds works the franchise page doesn't list (fusion units, solo releases). <b>Characters credited on anything collected are then followed automatically</b> (up to 150), which is how a franchise's whole cast turns up — most aren't credited on the franchise page itself. Non-character acts with a single release start unticked: they're often guests with unrelated catalogs.</div>
+        ${stepper(h, 2)}
+        <b>Artists found</b>
+        ${offRoster ? `<div class="muted lo-hint"><b>Everything on the roster is ticked.</b> ${offRoster} other act${offRoster === 1 ? ' is' : 's are'} credited on these releases but ${offRoster === 1 ? "isn't" : "aren't"} on the Wikipedia roster — often a unit the article doesn't list. Tick any that belong; leave the rest unticked to skip them.</div>` : ''}
+        <div class="muted lo-hint">${d.discovered.length} other act${d.discovered.length === 1 ? '' : 's'} credited on ${h(discGroupLabel(d))}'s releases (wrong artist? Back lets you pick another match). Tick the ones to find songs for — releases already read are skipped, so this mainly adds works the franchise page doesn't list (fusion units, solo releases). <b>Characters credited on anything collected are then followed automatically</b> (up to 150), which is how a franchise's whole cast turns up — most aren't credited on the franchise page itself. Non-character acts with a single release start unticked: they're often guests with unrelated catalogs.</div>
         <div class="lo-disc-actions">
-          <button class="btn btn-primary" data-act="disc-expand" ${ticked ? '' : 'disabled'}>Collect ${ticked} more</button>
-          <button class="btn btn-secondary" data-act="disc-skip-expand">Skip — use what's been read</button>
+          <button class="btn btn-primary" data-act="disc-expand" ${ticked ? '' : 'disabled'}>Find songs for ${ticked} more</button>
+          <button class="btn btn-secondary" data-act="disc-skip-expand">Skip — show the songs found so far</button>
           <button class="btn btn-secondary" data-act="disc-x-units" title="Groups and units only, no characters">Groups only</button>
           <button class="btn btn-secondary" data-act="disc-x-all">All</button>
           <button class="btn btn-secondary" data-act="disc-x-none">None</button>
@@ -149,8 +152,8 @@
         ${d.error ? `<div class="lo-disc-error">${h(d.error)}</div>` : ''}
       </div>
       <div class="lo-disc-list">
-        ${groups.length ? `<div class="lo-disc-grp"><b>Groups &amp; units</b><span class="muted">${groups.length}</span></div>${groups.map(row).join('')}` : ''}
-        ${chars.length ? `<div class="lo-disc-grp"><b>Characters</b><span class="muted">${chars.length}</span></div>${chars.map(row).join('')}` : ''}
+        ${section('units', 'Groups &amp; units', groups)}
+        ${section('chars', 'Characters', chars)}
       </div>
     </div>`;
   }
@@ -162,7 +165,8 @@
     const p = state.disc.progress || { done: 0, total: 0, label: '' };
     const pct = p.total ? Math.min(1, p.done / p.total) : null;
     return `<div class="lo-section lo-disc">
-      <b>${h(title)}</b>
+      ${stepper(h, p.step || 3)}
+      <b>${h(p.title || title)}</b>
       <div class="muted lo-hint">${h(p.label || '')}${p.total ? ` · ${p.done} / ${p.total}` : ''}</div>
       <div class="lo-scanbar-track">${pct != null ? `<div style="width:${Math.round(pct * 100)}%"></div>` : '<div class="lo-scanbar-indeterminate"></div>'}</div>
       <div class="lo-disc-actions"><button class="btn btn-secondary" data-act="disc-cancel">Stop</button></div>
@@ -180,6 +184,13 @@
     const have = d.tracks.filter((t) => t.inPlaylist).length;
     const s = d.summary || {};
     const groupName = d.group ? d.group.candidates[d.group.pick].name : '';
+    // Hover text for an alternate-version tag: which copy of the song is the one ticked by default instead.
+    const altTip = (t) => {
+      const o = t.altOf;
+      if (!o) return 'No full version of this song was found among the collected releases, so this alternate version is ticked in its place — untick it if you don\'t want it.';
+      const where = [o.album, [o.releaseType, o.year].filter(Boolean).join(' ')].filter(Boolean).join(' — ');
+      return `Prioritised instead: “${o.title}”${where ? ' on ' + where : ''}${o.durationText ? ' (' + o.durationText + ')' : ''}. This copy is unticked by default.`;
+    };
     // Only songs that came (also) from a member's page get a tag; the group's own songs are the default.
     const viaTag = (t) => {
       const others = (t.via || []).filter((v) => v !== groupName);
@@ -217,7 +228,7 @@
             <input type="checkbox" data-dsel="${h(t.videoId)}" ${d.picked.has(t.videoId) ? 'checked' : ''}>
             <span class="lo-disc-title">${h(t.title)}</span>
             <span class="muted lo-disc-meta">${h(names(t))}</span>
-            ${t.alt ? `<span class="tag">${h(t.altReason)}</span>` : ''}
+            ${t.altReason ? `<span class="tag" title="${h(altTip(t))}">${h(t.altReason)}</span>` : ''}
             ${t.inPlaylist && target === 'current' ? '<span class="tag">in playlist</span>' : ''}
             ${viaTag(t)}
             <span class="num">${h(t.durationText || '')}</span>
@@ -229,10 +240,12 @@
 
     return `<div class="lo-disc">
       <div class="lo-disc-bar">
+        ${stepper(h, 4)}
+        <b>Songs found</b>
         <div class="lo-disc-summary">${notes.map(h).join(' · ')}</div>
         ${targetCtl}
         <div class="lo-disc-actions">
-          <button class="btn btn-primary" data-act="disc-add" ${picked ? '' : 'disabled'}>Add ${picked} song${picked === 1 ? '' : 's'}</button>
+          <button class="btn btn-primary" data-act="disc-add" ${picked ? '' : 'disabled'}>Add ${picked} song${picked === 1 ? '' : 's'} to playlist</button>
           <button class="btn btn-secondary" data-act="disc-originals" title="Select every song except alternate versions and duplicates">Originals only</button>
           <button class="btn btn-secondary" data-act="disc-all">All</button>
           <button class="btn btn-secondary" data-act="disc-none">None</button>
@@ -250,6 +263,7 @@
     if (!r) return '';
     const url = `https://music.youtube.com/playlist?list=${encodeURIComponent(r.playlistId)}`;
     return `<div class="lo-section lo-disc">
+      ${stepper(h, 5)}
       <b>${r.cancelled ? 'Stopped' : 'Done'}</b>
       <div class="lo-hint">${r.added} added${r.skipped ? `, ${r.skipped} already there (skipped)` : ''}${r.failed.length ? `, ${r.failed.length} failed` : ''} of ${r.requested} requested.</div>
       <div class="muted lo-hint">${

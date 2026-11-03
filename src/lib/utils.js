@@ -96,7 +96,7 @@
     // Japanese anime/game release conventions, romanized (also cover the countable-if-any
     // Latin-script uploads use): a "TV size" edit is trimmed to broadcast length, "off vocal"
     // is the instrumental/karaoke track, "on vocal" its counterpart, etc.
-    '|tv ?size|tv ?(?:ver\\.?|version|edit)|full ?size|full ?(?:ver\\.?|version)|short ?size|short ?(?:ver\\.?|version)|off ?vocal|on ?vocal|game ?size|movie ?size|movie ?(?:ver\\.?|version)|ova ?size';
+    '|game ?(?:edit|ver\\.?|version)|short ?edit|tv ?size|tv ?(?:ver\\.?|version|edit)|full ?size|full ?(?:ver\\.?|version)|short ?size|short ?(?:ver\\.?|version)|off ?vocal|on ?vocal|game ?size|movie ?size|movie ?(?:ver\\.?|version)|ova ?size';
   const VERSION_CJK =
     // Chinese (simplified + traditional)
     '现场版|現場版|现场|現場|演唱会版|演唱會版|混音|重混|重制版|重製版|重制|重製|伴奏|翻唱|钢琴版|鋼琴版|吉他版|加速版|减速版|減速版|慢速版|加长版|加長版|完整版|清唱|无损|無損|纯音乐版|純音樂版|原版|新版|旧版|舊版|演奏版|弦乐版|弦樂版|电音版|電音版|说唱版|饒舌版' +
@@ -113,6 +113,9 @@
   const VERSION_RE = markerRe(VERSION_WORDS, VERSION_CJK);
   // Version marker after a separator: "Song - Remix", "Song / Remix", "曲名 － Live"
   const DASH_VERSION_RE = new RegExp(`\\s[-–—|/／－]\\s(?=.*(?:${NB}(?:${VERSION_WORDS})${NA}|(?:${VERSION_CJK}))).*$`, 'iu');
+  // Marker wrapped in dashes/tildes with no space after the first one — the usual form for Japanese releases:
+  // "Song -Game Edit-", "Song ~Instrumental~", "Song －Off Vocal－". (A space is required *before* the dash so "Hi-Fi Live" is left alone.)
+  const WRAPPED_VERSION_RE = new RegExp(`\\s+[-~〜～―－]+[^-~〜～―－]*?(?:${NB}(?:${VERSION_WORDS})${NA}|(?:${VERSION_CJK}))[^-~〜～―－]*[-~〜～―－]*\\s*$`, 'iu');
   // Trailing markers, possibly joined by + & /: "Song Sped Up", "Song Slowed + Reverb", "曲名 现场版", "曲名リミックス"
   const TRAIL_VERSION_RE = new RegExp(`(?:(?:\\s+[+&/]?\\s*(?:${VERSION_WORDS})${NA})|(?:\\s*(?:${VERSION_CJK})))+\\s*$`, 'iu');
   // Brackets, including full-width and CJK corner brackets
@@ -151,6 +154,7 @@
     if (versions) {
       s = stripBracketsMatching(s, VERSION_RE);
       s = s.replace(DASH_VERSION_RE, '');
+      s = s.replace(WRAPPED_VERSION_RE, '');
       s = s.replace(TRAIL_VERSION_RE, '');
     }
     return normalizeKey(s);

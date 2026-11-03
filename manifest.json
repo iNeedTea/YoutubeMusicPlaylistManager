@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Playlist Organizer for YouTube Music & Spotify",
-  "version": "0.8.2",
+  "version": "0.9.8",
   "description": "Organize playlists on YouTube Music and Spotify: sort by artist/date, find duplicates (with remix/collab matching), bulk move tracks, tag playlists, and export. Works in any UI language.",
   "permissions": ["storage", "scripting"],
   "host_permissions": ["https://music.youtube.com/*", "https://open.spotify.com/*", "https://en.wikipedia.org/*", "https://musicbrainz.org/*"],

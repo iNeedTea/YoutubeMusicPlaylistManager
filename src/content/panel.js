@@ -71,21 +71,18 @@
     disc: {
       phase: 'idle',
       artistQuery: '',
-      includeSolo: false,
-      memberText: '',
-      includeAlt: false,
-      franchise: false, // also collect the units/characters credited on the franchise artist's releases
+      includeSolo: false, // set by the lookup (discSetMode): a group's members and sub-units are searched for by name
+      memberText: '', // those names, comma-separated, from the looked-up roster
+      franchise: false, // set by the lookup (discSetMode): also collect the units/characters credited on the franchise artist's releases
       discovered: [], // [{ browseId, name, releases }] — acts credited on what was read, offered in the 'discovered' phase
       dxPick: new Set(), // browseIds of discovered acts to expand
       dxDone: new Set(), // browseIds already collected (ticked, or followed automatically)
       kinds: new Map(), // browseId -> 'cast' | 'member' | 'unit' | 'actor' | null: how each discovered act relates to the roster
       lookup: null, // { query, status: 'loading'|'done'|'empty'|'error', pages, pick, errors } — opt-in member/cast lookup
-      autoNote: null, // { skipped: [names], total } — members the one-click flow wasn't sure enough about to add
-      reviewOnly: false, // 'resolved' phase from the one-click flow: show only the members that need a decision
-      autoPause: 0, // 'discovered' phase from the one-click flow: how many acts not on the roster are waiting for a look
+      autoNote: null, // { skipped: [names], total } — members the lookup wasn't sure enough about to pre-select
       group: null, // { candidates, pick }
-      members: [], // [{ query, candidates, pick }] — pick -1 = skip
-      progress: null, // { done, total, label }
+      members: [], // [{ query, candidates, pick, review?, sel? }] — pick -1 = skip; review members offer every candidate as a checkbox (sel)
+      progress: null, // { done, total, label, title?, step? } — step is the 1–5 position in the stepper
       tracks: [],
       picked: new Set(), // video ids ticked in the preview
       summary: null,
@@ -605,7 +602,7 @@
   };
   let discLastPaint = 0;
   function discProgress(done, total, label) {
-    state.disc.progress = { done, total, label };
+    state.disc.progress = { ...state.disc.progress, done, total, label }; // keeps the title/step of the stage in progress
     const now = Date.now();
     if (now - discLastPaint > 150) {
       discLastPaint = now;
@@ -613,11 +610,10 @@
     }
   }
 
-  /** Default ticks: everything except alternate versions (unless asked for) and songs the target playlist already has. */
-  function discSelectDefault(forceOriginals) {
+  /** Default ticks: everything except alternate versions (listed unticked in the song list) and songs the target playlist already has. */
+  function discSelectDefault() {
     const d = state.disc;
-    const withAlt = d.includeAlt && !forceOriginals;
-    d.picked = new Set(d.tracks.filter((t) => !(t.inPlaylist && discTarget() === 'current') && (withAlt || !t.alt)).map((t) => t.videoId));
+    d.picked = new Set(d.tracks.filter((t) => !(t.inPlaylist && discTarget() === 'current') && !t.alt).map((t) => t.videoId));
   }
 
   /** Index of the candidate whose name best matches `query` (exact > prefix > substring; ties keep search order). */
@@ -660,7 +656,21 @@
     return page && YTMO.utils.normalizeKey(l.query) === YTMO.utils.normalizeKey(state.disc.artistQuery) ? YTMO.roster.indexPage(page) : null;
   }
 
-  /** Group mode: fill the member box from the looked-up page (members, plus the sub-units it lists). Editable afterwards. */
+  /**
+   * Group or franchise, decided by what the lookup found rather than asked: a roster whose entries are characters with
+   * voice actors is a franchise (units and characters come from the credits on its releases); a plain member list is a
+   * group (its members and sub-units are searched for by name). No roster → neither, i.e. just the artist.
+   */
+  function discSetMode() {
+    const d = state.disc;
+    const page = lookupPage();
+    const voiced = page ? page.members.filter((m) => m.voice.length).length : 0;
+    d.franchise = !!page && voiced >= 2 && voiced * 4 >= page.members.length;
+    d.includeSolo = !!page && !d.franchise;
+    discApplyRosterToMembers();
+  }
+
+  /** Group mode: the looked-up members, plus the sub-units the page lists, become the names searched for. */
   function discApplyRosterToMembers() {
     const d = state.disc;
     const page = lookupPage();
@@ -695,16 +705,16 @@
     const orphaned = !YTMO.utils.alive() || /context invalidated|receiving end does not exist/i.test(res.error || '');
     if (!res.ok) d.lookup = { query: q, status: 'error', pages: [], pick: 0, errors: [orphaned ? 'the extension was reloaded or updated since this tab opened. Reload this tab (F5) and try again.' : res.error] };
     else d.lookup = { query: q, status: res.pages.length ? 'done' : 'empty', pages: res.pages, pick: 0, errors: res.errors || [] };
-    discApplyRosterToMembers();
+    discSetMode();
     render();
     return d.lookup.status;
   }
 
   /**
-   * The whole flow behind one click: look up the roster, find the group and each member/unit on YouTube Music, read all
-   * their releases, follow the franchise's characters, and stop at the preview — the only point that needs the user (nothing
-   * is added until they say so). Stops early, with a message, if the lookup finds nothing: running unfiltered would bring
-   * back exactly the unrelated work the lookup exists to keep out.
+   * Step 1 of the flow: look up the roster online, then find the group and each member/unit on YouTube Music, and stop at
+   * the list of artists found ('resolved') — nothing is collected until the user presses "Find songs" there. Stops early,
+   * with a message, if the lookup finds nothing: running unfiltered would bring back exactly the unrelated work the
+   * lookup exists to keep out.
    */
   async function discAuto() {
     const d = state.disc;
@@ -717,11 +727,7 @@
     d.autoNote = null;
     d.control = { cancelled: false };
     d.phase = 'collecting';
-    d.progress = { done: 0, total: 0, label: 'Looking up the member / cast list online…' };
-    // Group: the looked-up members and sub-units are what we're about to search for. Franchise: the characters are found by
-    // following credits instead, so a leftover "include solo" tick (and the member names a previous group run put in the
-    // box) must not turn the franchise into a member search.
-    d.includeSolo = !d.franchise;
+    d.progress = { done: 0, total: 0, label: 'Looking up the member / cast list online…', title: 'Looking up artists…', step: 1 };
     const fresh = d.lookup && d.lookup.status === 'done' && YTMO.utils.normalizeKey(d.lookup.query) === YTMO.utils.normalizeKey(q);
     render();
     if (!fresh && (await discLookup()) !== 'done') {
@@ -732,29 +738,19 @@
       d.phase = 'idle';
       return render();
     }
-    discApplyRosterToMembers();
+    // Group: the looked-up members and sub-units are searched for. Franchise: the characters are found by following credits
+    // instead. Re-derived here because a reused lookup may have been overridden by "Find artist only" since.
+    discSetMode();
     if (!(await discSearch(true))) return;
     if (d.control.cancelled) {
-      d.phase = 'resolved';
+      d.phase = 'idle'; // the member search was cut short, so the list would be incomplete
       return render();
     }
-    if (d.members.some((m) => m.review)) {
-      // Members it couldn't match with confidence: ask once, with all their candidates, instead of skipping them silently.
-      d.phase = 'resolved';
-      d.reviewOnly = true;
-      return render();
-    }
-    await discCollect();
-    if (d.phase === 'discovered' && !d.control.cancelled) {
-      // Franchise: the roster acts are ticked and go ahead on their own. Credited acts that aren't on the roster (a unit the
-      // Wikipedia article doesn't list, like MEZZO") get one look first; a voice actor's own pages never count as a question.
-      const open = d.discovered.filter((c) => !d.dxDone.has(c.browseId) && !d.dxPick.has(c.browseId) && d.kinds.get(c.browseId) !== 'actor');
-      if (open.length) {
-        d.autoPause = open.length;
-        return render();
-      }
-      await discExpand();
-    }
+    d.phase = 'resolved';
+    render();
+    // A franchise's units and characters are only known from the credits on the franchise artist's releases, so read those
+    // now and land on the ticked list of acts (the "Artists found" step) rather than on a lone group dropdown.
+    if (d.franchise) await discCollect({ title: 'Looking up artists…', label: 'Reading the releases to find the units and characters credited on them…', step: 1 });
   }
 
   /** Classify every discovered act against the roster (or, without one, spot voice actors credited under their own name). */
@@ -780,10 +776,11 @@
   }
 
   /**
-   * Find the group and (when asked for) each member on YouTube Music. Manually this stops at the "Confirm the artists" step.
-   * With `auto` there is nobody to confirm, so it picks for them — strictly: a member is only accepted on an exact name
-   * match or a name that includes the group ("BSS(SEVENTEEN)"); anything weaker (a different "Jun Matsuoka") is skipped and
-   * reported rather than guessed. Resolves true when it went through.
+   * Find the group and (when asked for) each member on YouTube Music; either way the result is shown in the "Artists
+   * found" list for the user to confirm. With `auto` (the lookup flow) the pre-selection is strict: a member is only
+   * pre-selected on an exact name match or a name that includes the group ("BSS(SEVENTEEN)"); anything weaker (a different
+   * "Jun Matsuoka") is left unselected with all its candidates offered as checkboxes rather than guessed.
+   * Resolves true when it went through.
    */
   async function discSearch(auto = false) {
     const d = state.disc;
@@ -795,10 +792,8 @@
     }
     d.error = '';
     d.autoNote = null;
-    d.reviewOnly = false;
-    d.autoPause = 0;
     if (!auto) d.phase = 'searching';
-    else d.progress = { done: 0, total: 0, label: 'Finding the group on YouTube Music…' };
+    else d.progress = { done: 0, total: 0, label: 'Finding the group on YouTube Music…', title: 'Looking up artists…', step: 1 };
     render();
     try {
       const candidates = await catalog().searchArtists(q);
@@ -825,16 +820,16 @@
           const c = merged.filter((x) => !groupIds.has(x.browseId)).slice(0, 8);
           let pick = c.length ? bestPick(name, c, q) : -1;
           if (auto && pick >= 0 && pickScore(name, c[pick].name, q) < 3) pick = -1; // not sure enough to add without asking
-          const m = { query: name, candidates: c, pick };
+          // Every member is a checkbox list of its candidates, the best match ticked when there is one.
+          const m = { query: name, candidates: c, pick, sel: new Set(pick >= 0 ? [pick] : []) };
           // Unsure but there are candidates (a unit YouTube Music names "HxW" for Wikipedia's "Hoshi X Woozi"): the flow
           // pauses once with every candidate offered as a checkbox, rather than guessing or dropping them.
           if (auto && pick < 0 && c.length) {
             m.review = true;
-            m.sel = new Set();
           }
           d.members.push(m);
         }
-        d.autoNote = auto ? { skipped: d.members.filter((m) => m.pick < 0).map((m) => m.query), total: d.members.length } : null;
+        d.autoNote = auto ? { skipped: d.members.filter((m) => m.sel.size === 0).map((m) => m.query), total: d.members.length } : null;
       }
       if (!auto) d.phase = 'resolved';
       render();
@@ -892,21 +887,21 @@
     await Promise.all(Array.from({ length: concurrency }, worker));
   }
 
-  async function discCollect() {
+  /** `progress` overrides the heading/step shown while collecting (the franchise lookup reads releases as part of step 1). */
+  async function discCollect(progress) {
     const d = state.disc;
     const picks = [d.group.candidates[d.group.pick]];
     for (const m of d.members) {
       if (m.sel) for (const i of m.sel) m.candidates[i] && picks.push(m.candidates[i]); // a "review" member: any number of candidates
       else if (m.pick >= 0 && m.candidates[m.pick]) picks.push(m.candidates[m.pick]);
     }
-    d.reviewOnly = false; // Back from the preview shows the full list, not just the questions
     // What's still unmatched now that the review (if any) has been answered, for the preview's note.
     if (d.autoNote) d.autoNote.skipped = d.members.filter((m) => (m.sel ? m.sel.size === 0 : m.pick < 0)).map((m) => m.query);
     const artists = picks.filter((a, i) => a && picks.findIndex((b) => b && b.browseId === a.browseId) === i);
     d.error = '';
     d.phase = 'collecting';
     d.control = { cancelled: false };
-    d.progress = { done: 0, total: 0, label: 'Starting…' };
+    d.progress = { done: 0, total: 0, label: 'Starting…', step: 3, ...progress };
     d.discovered = [];
     render();
     try {
@@ -958,7 +953,7 @@
     const follow = (c) => catalog().isCharacterCredit(c.name) && (!idx || YTMO.roster.classify(c.name, idx) === 'cast');
     while (queue.length && !d.control.cancelled) {
       const known = new Set(discWork.credits.keys());
-      d.progress = { done: 0, total: queue.length, label: round ? `Following characters (round ${round})…` : 'Starting…' };
+      d.progress = { done: 0, total: queue.length, label: round ? `Following characters (round ${round})…` : 'Starting…', step: 3 };
       await discHarvest(queue, 3, round ? `Round ${round}: ` : '');
       if (d.control.cancelled) break;
       const fresh = [...discWork.credits.values()].filter((c) => !known.has(c.browseId) && !discWork.mainIds.has(c.browseId) && !d.dxDone.has(c.browseId));
@@ -979,12 +974,11 @@
   async function discExpand() {
     const d = state.disc;
     const chosen = d.discovered.filter((c) => d.dxPick.has(c.browseId) && !d.dxDone.has(c.browseId)).map((c) => ({ browseId: c.browseId, name: c.name }));
-    d.autoPause = 0;
     if (!chosen.length) return discFinish();
     d.error = '';
     d.phase = 'collecting';
     d.control = { cancelled: false };
-    d.progress = { done: 0, total: chosen.length, label: 'Starting…' };
+    d.progress = { done: 0, total: chosen.length, label: 'Starting…', step: 3 };
     render();
     try {
       await discHarvestRounds(chosen);
@@ -1047,7 +1041,7 @@
     d.error = '';
     d.phase = 'adding';
     d.control = { cancelled: false };
-    d.progress = { done: 0, total: ids.length, label: useCurrent ? 'Adding…' : 'Creating playlist…' };
+    d.progress = { done: 0, total: ids.length, label: useCurrent ? 'Adding…' : 'Creating playlist…', step: 5 };
     render();
     try {
       let playlistId = state.playlistId;
@@ -1087,8 +1081,6 @@
   function discBack() {
     const d = state.disc;
     d.error = '';
-    d.autoPause = 0;
-    d.reviewOnly = false;
     // One step back along the way we came: preview -> (discovered, if franchise mode found any) -> resolved -> idle.
     d.phase = d.phase === 'preview' ? (d.franchise && d.discovered.length ? 'discovered' : 'resolved') : d.phase === 'discovered' ? 'resolved' : 'idle';
     render();
@@ -1298,6 +1290,8 @@
         case 'apply-order':
           return applySortToPlaylist();
         case 'disc-search':
+          state.disc.includeSolo = false; // the artist alone: no roster, so no members or franchise credits
+          state.disc.franchise = false;
           return discSearch();
         case 'disc-lookup':
           return discAuto();
@@ -1316,7 +1310,7 @@
           return render();
         case 'disc-cand-all':
         case 'disc-cand-none':
-          for (const m of state.disc.members) if (m.review) m.sel = new Set(act === 'disc-cand-all' ? m.candidates.map((_, i) => i) : []);
+          for (const m of state.disc.members) if (m.candidates.length) m.sel = new Set(act === 'disc-cand-all' ? m.candidates.map((_, i) => i) : []);
           return render();
         case 'disc-x-none':
           state.disc.dxPick = new Set();
@@ -1334,7 +1328,7 @@
           state.disc.picked = new Set();
           return render();
         case 'disc-originals':
-          discSelectDefault(true);
+          discSelectDefault();
           return render();
         case 'cancel':
           if (state.batch) state.batch.control.cancelled = true;
@@ -1388,7 +1382,17 @@
     const dopt = e.target.closest('[data-dopt]');
     if (dopt) {
       state.disc[dopt.dataset.dopt] = dopt.checked;
-      if (dopt.dataset.dopt === 'includeSolo' && dopt.checked && !state.disc.memberText.trim()) discApplyRosterToMembers();
+      return render();
+    }
+    const dxsec = e.target.closest('[data-dxsec]');
+    if (dxsec) {
+      const d = state.disc;
+      const wantChars = dxsec.dataset.dxsec === 'chars';
+      for (const c of d.discovered) {
+        if (d.dxDone.has(c.browseId) || catalog().isCharacterCredit(c.name) !== wantChars) continue;
+        if (dxsec.checked) d.dxPick.add(c.browseId);
+        else d.dxPick.delete(c.browseId);
+      }
       return render();
     }
     const chk = e.target.closest('[data-chk]');
@@ -1476,8 +1480,6 @@
       render();
     } else if (k === 'disc-artist') {
       state.disc.artistQuery = e.target.value; // no render: it would steal focus mid-typing
-    } else if (k === 'disc-members') {
-      state.disc.memberText = e.target.value;
     } else if (k === 'disc-newname') {
       state.disc.newName = e.target.value;
     } else if (k === 'disc-target') {
@@ -1485,7 +1487,7 @@
       render();
     } else if (k === 'disc-lookup-pick') {
       state.disc.lookup.pick = parseInt(e.target.value, 10) || 0;
-      discApplyRosterToMembers();
+      discSetMode();
       render();
     } else if (k === 'disc-pick') {
       const pick = parseInt(e.target.value, 10);

@@ -396,33 +396,118 @@
 
   const primaryKey = (t) => U.titleKey(t.title, { versions: true }) + '|' + U.normalizeKey((t.artists && t.artists[0]) || '');
   const typeRank = (t) => ({ album: 0, ep: 1, single: 2 }[(t.releaseType || '').toLowerCase()] ?? 3);
-  const rankOf = (t) => [U.hasVersionMarker(t.title) ? 1 : 0, typeRank(t), parseInt(t.year, 10) || 9999, t.trackNo || 0];
+
+  // Versions that are never the "main" copy of a song: instrumentals/karaoke and trimmed edits (game/TV/short size).
+  const NB = '(?<![\\p{L}\\p{N}])';
+  const NA = '(?![\\p{L}\\p{N}])';
+  const INSTRUMENTAL_RE = new RegExp(`${NB}(?:instrumental|inst\\.?|off ?vocal|karaoke|a ?cappella)${NA}|インスト|オフボーカル|オフヴォーカル|カラオケ|伴奏`, 'iu');
+  const EDIT_RE = new RegExp(`${NB}(?:game ?(?:edit|ver\\.?|version|size)|tv ?(?:size|edit|ver\\.?|version)|short ?(?:size|edit|ver\\.?|version)|movie ?(?:size|ver\\.?|version)|ova ?size)${NA}|ゲームサイズ|TVサイズ|ＴＶサイズ|ショートサイズ|ムービーサイズ`, 'iu');
+  /** 'instrumental' | 'shorter edit' | '' */
+  const minorKind = (title) => (INSTRUMENTAL_RE.test(title) ? 'instrumental' : EDIT_RE.test(title) ? 'shorter edit' : '');
+
+  /** Sort key: real copy before a short edit before an instrumental, unmarked before remixes/lives, then a copy not much shorter than its siblings, then album > EP > single, earlier, track order. */
+  const rankOf = (t, longest) => [
+    { instrumental: 2, 'shorter edit': 1 }[minorKind(t.title)] || 0,
+    U.hasVersionMarker(t.title) ? 1 : 0,
+    t.duration && longest && t.duration < longest * 0.8 ? 1 : 0, // an unmarked copy that is much shorter than another is probably a trimmed edit
+    typeRank(t),
+    parseInt(t.year, 10) || 9999,
+    t.trackNo || 0,
+  ];
   const cmpRank = (a, b) => {
-    const x = rankOf(a);
-    const y = rankOf(b);
-    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i];
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i];
     return 0;
   };
 
   /**
+   * Copies of one song: same title (ignoring version markers) AND at least one artist in common. Matching on the
+   * *first* artist only missed copies whose credits are ordered or padded differently ("Knights" vs "Knights, Foo"),
+   * leaving e.g. a game edit and the full song as two unrelated "originals".
+   */
+  function songClusters(tracks) {
+    // An umbrella credit ("ENSEMBLE STARS!!" is on ~80% of a franchise's tracks) says nothing about which copy is which,
+    // so it doesn't count as a shared artist — unless it is all a track has.
+    const freq = new Map();
+    const allKeys = (t) => [...new Set((t.artists && t.artists.length ? t.artists : ['']).map(U.normalizeKey))];
+    for (const t of tracks) for (const k of allKeys(t)) freq.set(k, (freq.get(k) || 0) + 1);
+    const umbrella = new Set(tracks.length >= 20 ? [...freq].filter(([, n]) => n > tracks.length * 0.3).map(([k]) => k) : []);
+    const artistKeys = (t) => {
+      const ks = allKeys(t);
+      const own = ks.filter((k) => !umbrella.has(k));
+      return own.length ? own : ks;
+    };
+    // The same song titled "<game/anime prefix>「Song」 (Game Edit)" is "Song" once the minor-version wrapper is removed.
+    const songKey = (t) => {
+      const inner = minorKind(t.title) && /[「『]([^」』]+)[」』]/.exec(t.title);
+      return U.titleKey(inner ? inner[1] : t.title, { versions: true });
+    };
+    const byTitle = new Map();
+    for (const t of tracks) {
+      const k = songKey(t);
+      if (!byTitle.has(k)) byTitle.set(k, []);
+      byTitle.get(k).push(t);
+    }
+    const clusters = [];
+    for (const [key, list] of byTitle) {
+      const open = [];
+      for (const t of list) {
+        const ks = artistKeys(t);
+        const hits = open.filter((c) => ks.some((k) => c.keys.has(k)));
+        const merged = { key, keys: new Set(ks), tracks: [t] };
+        for (const c of hits) {
+          c.keys.forEach((k) => merged.keys.add(k));
+          merged.tracks.push(...c.tracks);
+          open.splice(open.indexOf(c), 1);
+        }
+        open.push(merged);
+      }
+      clusters.push(...open);
+    }
+    // An instrumental/edit whose title has extra words around the song name ("TVアニメ『…』 OP主題歌「Stars' Ensemble!」
+    // (Instrumental) - TV ANIMATION …") still belongs to the full song when one title contains the other and they share an
+    // artist — or when the titles are identical but the credits differ (an instrumental credited only to the franchise).
+    // Being wrong here is harmless: a minor version is unticked either way, this only decides what the hover text points to.
+    const isMinorOnly = (c) => c.tracks.every((t) => minorKind(t.title));
+    const hosts = clusters.filter((c) => !isMinorOnly(c));
+    for (const c of clusters.filter(isMinorOnly)) {
+      let best = null;
+      let bestLen = 3;
+      for (const h of hosts) {
+        const len = Math.min(h.key.length, c.key.length);
+        const related = h.key === c.key || (h.key.includes(c.key) || c.key.includes(h.key)) && [...c.keys].some((k) => h.keys.has(k));
+        if (len > bestLen && related) {
+          best = h;
+          bestLen = len;
+        }
+      }
+      if (best) {
+        best.tracks.push(...c.tracks);
+        c.tracks = [];
+      }
+    }
+    return clusters.map((c) => c.tracks).filter((l) => l.length);
+  }
+
+  /**
    * Marks each track: `alt` (an alternate version or duplicate of a song already represented by a better copy —
-   * original over "(Inst.)"/"(Japanese ver.)", album over single over compilation, earlier over later) and
-   * `inPlaylist` (the target playlist already has it, by video id or by title+artist).
+   * original over "(Game Edit)" over "(Inst.)" over..., album over single over compilation, earlier over later; when
+   * a song only exists as an edit/instrumental, the best of those is the one kept and is tagged "only found as …"),
+   * `altOf` (the copy that was prioritised instead, for the preview's hover text) and `inPlaylist` (the target playlist already has it, by video id
+   * or by title+artist).
    */
   function classify(tracks, existing) {
-    const groups = new Map();
-    for (const t of tracks) {
-      const k = primaryKey(t);
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k).push(t);
-    }
     const ids = (existing && existing.ids) || new Set();
     const keys = (existing && existing.keys) || new Set();
-    for (const list of groups.values()) {
-      list.sort(cmpRank);
+    for (const list of songClusters(tracks)) {
+      const longest = Math.max(...list.map((t) => t.duration || 0));
+      list.sort((a, b) => cmpRank(rankOf(a, longest), rankOf(b, longest)));
+      const best = list[0];
       list.forEach((t, i) => {
+        const minor = minorKind(t.title);
         t.alt = i > 0;
-        t.altReason = i === 0 ? '' : U.hasVersionMarker(t.title) ? 'alternate version' : 'also on another release';
+        t.altOf = i > 0 ? { title: best.title, album: best.album, releaseType: best.releaseType, year: best.year, durationText: best.durationText } : null;
+        // With no full version in the list, the best instrumental/edit is ticked in its place (and says so).
+        t.altReason = i === 0 ? (minor ? `only found as ${minor}` : '') : minor || (U.hasVersionMarker(t.title) ? 'alternate version' : 'also on another release');
         t.inPlaylist = ids.has(t.videoId) || keys.has(primaryKey(t));
       });
     }
