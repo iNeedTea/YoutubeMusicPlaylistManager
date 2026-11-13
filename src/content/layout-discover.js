@@ -61,6 +61,12 @@
       .map((c, n) => `<option value="${n}" ${n === pick ? 'selected' : ''}>${h(c.name)}${c.subtitle ? ' — ' + h(c.subtitle) : ''}</option>`)
       .join('')}${i === 'g' ? '' : `<option value="-1" ${pick < 0 ? 'selected' : ''}>Skip this member</option>`}</select>`;
 
+  /** "Missing an artist?" box shared by both Artists found pages: searches YouTube Music and adds the result, keeping every tick already made. */
+  const addRow = (h, d) =>
+    `<div class="lo-disc-add"><input type="text" class="input lo-disc-input" data-in="disc-add" placeholder="Missing someone? Type an artist, unit or character name…" value="${h(d.addText)}" ${d.addBusy ? 'disabled' : ''}><button class="btn btn-secondary" data-act="disc-add-artist" ${d.addBusy ? 'disabled' : ''}>${d.addBusy ? 'Searching…' : 'Add'}</button></div>${
+      d.addNote ? `<div class="muted lo-hint">${h(d.addNote)}</div>` : ''
+    }`;
+
   function confirmView(ctx) {
     const { h, state } = ctx;
     const d = state.disc;
@@ -95,6 +101,7 @@
       }</div>
       <div class="lo-disc-pickrow"><span class="lo-disc-pickname">${h(d.artistQuery)}</span>${candSelect(h, d.group.candidates, d.group.pick, 'g')}</div>
       ${memberRows}
+      ${addRow(h, d)}
       ${d.error ? `<div class="lo-disc-error">${h(d.error)}</div>` : ''}
       <div class="lo-disc-actions">
         <button class="btn btn-primary" data-act="disc-collect">Find songs${artists > 1 ? ` for ${artists} artists` : ''}</button>
@@ -117,7 +124,10 @@
       if (k) return `<span class="tag">${KIND_TAG[k]}</span>`;
       return hasRoster ? '<span class="tag">not on roster</span>' : '';
     };
-    const meta = (c) => `${kindTag(c)}<span class="muted lo-disc-meta">${c.releases} release${c.releases === 1 ? '' : 's'}</span>`;
+    const meta = (c) =>
+      c.byName
+        ? `${kindTag(c)}<span class="muted lo-disc-meta" title="${c.manual ? 'Added by you: a YouTube Music search for the name you typed.' : "Not credited on any release read; found by searching YouTube Music for the roster's unit name."} Check the audience numbers match.">${c.manual ? 'added by you' : 'found by name'}${c.subtitle ? ' — ' + h(c.subtitle) : ''}</span>`
+        : `${kindTag(c)}<span class="muted lo-disc-meta">${c.releases} release${c.releases === 1 ? '' : 's'}</span>`;
     const row = (c) =>
       done(c)
         ? `<div class="lo-disc-row have"><input type="checkbox" checked disabled><span class="lo-disc-title">${h(c.name)}</span><span class="tag">collected</span>${meta(c)}</div>`
@@ -141,6 +151,7 @@
         <b>Artists found</b>
         ${offRoster ? `<div class="muted lo-hint"><b>Everything on the roster is ticked.</b> ${offRoster} other act${offRoster === 1 ? ' is' : 's are'} credited on these releases but ${offRoster === 1 ? "isn't" : "aren't"} on the Wikipedia roster — often a unit the article doesn't list. Tick any that belong; leave the rest unticked to skip them.</div>` : ''}
         <div class="muted lo-hint">${d.discovered.length} other act${d.discovered.length === 1 ? '' : 's'} credited on ${h(discGroupLabel(d))}'s releases (wrong artist? Back lets you pick another match). Tick the ones to find songs for — releases already read are skipped, so this mainly adds works the franchise page doesn't list (fusion units, solo releases). <b>Characters credited on anything collected are then followed automatically</b> (up to 150), which is how a franchise's whole cast turns up — most aren't credited on the franchise page itself. Non-character acts with a single release start unticked: they're often guests with unrelated catalogs.</div>
+        ${addRow(h, d)}
         <div class="lo-disc-actions">
           <button class="btn btn-primary" data-act="disc-expand" ${ticked ? '' : 'disabled'}>Find songs for ${ticked} more</button>
           <button class="btn btn-secondary" data-act="disc-skip-expand">Skip — show the songs found so far</button>

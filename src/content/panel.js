@@ -74,6 +74,10 @@
       includeSolo: false, // set by the lookup (discSetMode): a group's members and sub-units are searched for by name
       memberText: '', // those names, comma-separated, from the looked-up roster
       franchise: false, // set by the lookup (discSetMode): also collect the units/characters credited on the franchise artist's releases
+      addText: '', // "Add a missing artist" box on the Artists found pages
+      addBusy: false,
+      addNote: '', // why the last add found nothing / found nothing new
+      manual: [], // artists the user added by name while in the 'discovered' phase; kept across Back so they aren't lost
       discovered: [], // [{ browseId, name, releases }] — acts credited on what was read, offered in the 'discovered' phase
       dxPick: new Set(), // browseIds of discovered acts to expand
       dxDone: new Set(), // browseIds already collected (ticked, or followed automatically)
@@ -763,7 +767,7 @@
       if (cv && cv.actor) actorKeys.add(YTMO.utils.normalizeKey(cv.actor));
     }
     d.kinds = new Map(
-      d.discovered.map((c) => [c.browseId, idx ? YTMO.roster.classify(c.name, idx) : !catalog().isCharacterCredit(c.name) && actorKeys.has(YTMO.utils.normalizeKey(c.name)) ? 'actor' : null])
+      d.discovered.map((c) => [c.browseId, c.credit && !c.manual ? 'unit' : idx ? YTMO.roster.classify(c.name, idx) :!catalog().isCharacterCredit(c.name) && actorKeys.has(YTMO.utils.normalizeKey(c.name)) ? 'actor' : null])
     );
   }
 
@@ -774,6 +778,31 @@
     if (discRosterIndex()) return kind === 'cast' || kind === 'member' || kind === 'unit';
     return catalog().isCharacterCredit(c.name) || c.releases >= 2;
   }
+
+  /**
+   * Index of the candidate that is the initials page of a two-person unit, or -1: "Hoshi X Woozi" → "HxW", "S.Coups X
+   * Mingyu" → "CxM (SEVENTEEN)", "DK X Seungkwan" → "DxS (SEVENTEEN)". Each initial must occur in its own person's name,
+   * so "JxW" is not taken for "Jeonghan X Joshua".
+   */
+  function unitByInitials(name, candidates) {
+    const parts = name.split(/\s+(?:x|×|&)\s+/i);
+    if (parts.length !== 2) return -1;
+    const [a, b] = parts.map((p) => p.toLowerCase());
+    return candidates.findIndex((c) => {
+      const m = /^([\p{L}.]{1,3})\s*[x×]\s*([\p{L}.]{1,3})(?:\s*[(（].*[)）])?$/iu.exec(c.name.trim());
+      if (!m) return false;
+      const [i, j] = [m[1], m[2]].map((s) => s.replace(/\./g, '').toLowerCase());
+      return i && j && a.includes(i) && b.includes(j);
+    });
+  }
+
+  /** A credit-only act (see catalog.findCreditSongs) shaped like an artist candidate, so it lists and collects like one. */
+  const creditCandidate = (cr) => ({
+    browseId: 'credit:' + cr.key,
+    name: cr.name,
+    subtitle: `credit only — ${cr.songs.length} song${cr.songs.length === 1 ? '' : 's'}, no artist page`,
+    credit: cr,
+  });
 
   /**
    * Find the group and (when asked for) each member on YouTube Music; either way the result is shown in the "Artists
@@ -792,6 +821,8 @@
     }
     d.error = '';
     d.autoNote = null;
+    d.manual = []; // a new search starts a new list
+    d.addNote = '';
     if (!auto) d.phase = 'searching';
     else d.progress = { done: 0, total: 0, label: 'Finding the group on YouTube Music…', title: 'Looking up artists…', step: 1 };
     render();
@@ -817,11 +848,23 @@
             for (const c of await catalog().searchArtists(query)) if (!merged.some((m) => m.browseId === c.browseId)) merged.push(c);
             await YTMO.utils.sleep(150);
           }
-          const c = merged.filter((x) => !groupIds.has(x.browseId)).slice(0, 8);
+          let c = merged.filter((x) => !groupIds.has(x.browseId)).slice(0, 8);
           let pick = c.length ? bestPick(name, c, q) : -1;
           if (auto && pick >= 0 && pickScore(name, c[pick].name, q) < 3) pick = -1; // not sure enough to add without asking
+          // A unit YouTube Music names by initials ("CxM" for "S.Coups X Mingyu"): trusted when the initials fit the two names.
+          if (auto && pick < 0) pick = unitByInitials(name, c);
           // Every member is a checkbox list of its candidates, the best match ticked when there is one.
-          const m = { query: name, candidates: c, pick, sel: new Set(pick >= 0 ? [pick] : []) };
+          const sel = new Set(pick >= 0 ? [pick] : []);
+          // No artist page of that name: a two-person unit may exist only as a credit ("JEONGHAN & JOSHUA"), so offer its
+          // songs as a ticked entry of their own.
+          if (auto && pick < 0) {
+            const cr = await catalog().findCreditSongs(name);
+            if (cr) {
+              c = [creditCandidate(cr), ...c];
+              sel.add(0);
+            }
+          }
+          const m = { query: name, candidates: c, pick, sel };
           // Unsure but there are candidates (a unit YouTube Music names "HxW" for Wikipedia's "Hoshi X Woozi"): the flow
           // pauses once with every candidate offered as a checkbox, rather than guessing or dropping them.
           if (auto && pick < 0 && c.length) {
@@ -840,6 +883,63 @@
       render();
       return false;
     }
+  }
+
+  /**
+   * "Add a missing artist" on the Artists found pages: search YouTube Music for the typed name and add the result to the
+   * list, best match ticked and the other candidates offered. Nothing already ticked or chosen is touched. On the group
+   * list (phase 'resolved') it becomes another member entry, collected with the rest by "Find songs"; on the franchise
+   * list (phase 'discovered') it becomes another credited act, collected by "Find songs for N more" and remembered in
+   * d.manual so going Back and re-reading the releases doesn't drop it.
+   */
+  async function discAddArtist() {
+    const d = state.disc;
+    const name = d.addText.trim();
+    if (!name || d.addBusy) return;
+    d.addBusy = true;
+    d.addNote = '';
+    render();
+    try {
+      const found = await catalog().searchArtists(name);
+      // A two-person name with no artist page of its own ("Jeonghan x Joshua") may exist only as a credit.
+      const cr = await catalog().findCreditSongs(name);
+      if (cr) found.unshift(creditCandidate(cr));
+      const best = cr ? 0 : found.length ? bestPick(name, found) : -1;
+      if (best < 0) {
+        d.addNote = `No artist found on YouTube Music for “${name}”.`;
+      } else if (d.phase === 'discovered') {
+        const have = (id) => d.discovered.find((c) => c.browseId === id);
+        const taken = (id) => (discWork && discWork.mainIds.has(id)) || d.dxDone.has(id);
+        if (taken(found[best].browseId)) d.addNote = `“${found[best].name}” is already collected.`;
+        else if (have(found[best].browseId)) {
+          d.dxPick.add(found[best].browseId);
+          d.addNote = `“${found[best].name}” is already in the list — ticked.`;
+          d.addText = '';
+        } else {
+          found.forEach((c, i) => {
+            if (taken(c.browseId) || have(c.browseId)) return;
+            const entry = { browseId: c.browseId, name: c.name, releases: 0, byName: true, manual: true, subtitle: c.subtitle || '', credit: c.credit, tick: i === best };
+            d.discovered.push(entry);
+            d.manual.push(entry);
+            if (entry.tick) d.dxPick.add(c.browseId);
+          });
+          discRefreshKinds();
+          d.addText = '';
+        }
+      } else {
+        const ids = new Set([d.group.candidates[d.group.pick].browseId]);
+        d.members.forEach((m) => m.sel && m.sel.forEach((n) => m.candidates[n] && ids.add(m.candidates[n].browseId)));
+        if (ids.has(found[best].browseId)) d.addNote = `“${found[best].name}” is already in the list.`;
+        else {
+          d.members.push({ query: name, candidates: found, pick: best, sel: new Set([best]), manual: true });
+          d.addText = '';
+        }
+      }
+    } catch (e) {
+      d.addNote = e.message || String(e);
+    }
+    d.addBusy = false;
+    render();
   }
 
   // The harvest in progress. Kept off `state` (large, never rendered): tracks merged by video id, releases already
@@ -864,7 +964,7 @@
         const idx = artists.length - queue.length;
         const prefix = artists.length > 1 && concurrency === 1 ? `(${idx}/${artists.length}) ` : '';
         try {
-          const { tracks, stats, credits } = await catalog().collectArtist(artist, {
+          const { tracks, stats, credits } = await (artist.credit ? catalog().collectCredit : catalog().collectArtist)(artist, {
             control: d.control,
             seen: discWork.seen,
             onStep: concurrency === 1 ? (done, total, label) => discProgress(done, total, prefix + label) : undefined,
@@ -888,6 +988,39 @@
   }
 
   /** `progress` overrides the heading/step shown while collecting (the franchise lookup reads releases as part of step 1). */
+  /**
+   * Franchise mode: units the roster lists but no collected release credits (Paradox Live's Buraikan, VISTY or 1Nm8 never
+   * appear on the franchise artist's own page) are searched for on YouTube Music by name and added to the credits, so they
+   * reach the list. Only an artist whose name equals the unit's (ignoring case, spacing, "The") is taken, since a bare
+   * unit name otherwise finds unrelated acts; those are tagged "found by name" so the match is easy to check.
+   */
+  async function discAddRosterUnits() {
+    const d = state.disc;
+    const page = lookupPage();
+    if (!page || !page.units.length) return;
+    const nameKey = (s) => String(s || '').toLowerCase().replace(/^the\s+/, '').replace(/[^\p{L}\p{N}]+/gu, '');
+    const franchise = d.artistQuery.trim();
+    const credited = [...discWork.credits.values()];
+    const missing = page.units.filter((u) => nameKey(u).length >= 2 && !credited.some((c) => nameKey(c.name) === nameKey(u) || YTMO.roster.classify(c.name, { names: [], actors: [], units: [u] }) === 'unit'));
+    for (const [i, unit] of missing.entries()) {
+      if (d.control.cancelled) return;
+      discProgress(i, missing.length, `Finding the unit ${unit} on YouTube Music`);
+      let hit = null;
+      for (const query of [`${unit} ${franchise}`, unit]) {
+        const found = await catalog().searchArtists(query);
+        hit = found.find((c) => nameKey(c.name) === nameKey(unit) && !discWork.mainIds.has(c.browseId) && !discWork.credits.has(c.browseId));
+        await YTMO.utils.sleep(150);
+        if (hit) break;
+      }
+      if (hit) discWork.credits.set(hit.browseId, { browseId: hit.browseId, name: hit.name, releases: 0, byName: true, subtitle: hit.subtitle || '' });
+      else {
+        // No artist of that name: a multi-person unit can exist only as a credit.
+        const cr = await catalog().findCreditSongs(unit);
+        if (cr) discWork.credits.set('credit:' + cr.key, { ...creditCandidate(cr), releases: 0, byName: true });
+      }
+    }
+  }
+
   async function discCollect(progress) {
     const d = state.disc;
     const picks = [d.group.candidates[d.group.pick]];
@@ -912,12 +1045,24 @@
         return render();
       }
       if (d.franchise) {
+        await discAddRosterUnits();
+        if (d.control.cancelled) {
+          d.phase = 'resolved';
+          return render();
+        }
         // Everyone else credited on what we just read: the franchise's units and characters. A character credit
         // ("Name(CV.Actor)") is a strong franchise signal even at one release, so those start ticked; other acts
         // need 2+ releases, since single-release credits are often one-off guests with unrelated catalogs.
         d.discovered = [...discWork.credits.values()].filter((c) => !discWork.mainIds.has(c.browseId)).sort((a, b) => b.releases - a.releases || a.name.localeCompare(b.name));
         discRefreshKinds();
         d.dxPick = new Set(d.discovered.filter(discDefaultTick).map((c) => c.browseId));
+        // Artists the user added by hand earlier come back, ticked as they were.
+        for (const m of d.manual) {
+          if (discWork.mainIds.has(m.browseId) || d.discovered.some((c) => c.browseId === m.browseId)) continue;
+          d.discovered.push({ ...m });
+          if (m.tick) d.dxPick.add(m.browseId);
+        }
+        discRefreshKinds();
         d.dxDone = new Set();
         if (d.discovered.length) {
           d.phase = 'discovered';
@@ -973,7 +1118,7 @@
   /** Franchise mode: collect the ticked units/characters too (their releases already read are skipped), following new characters. */
   async function discExpand() {
     const d = state.disc;
-    const chosen = d.discovered.filter((c) => d.dxPick.has(c.browseId) && !d.dxDone.has(c.browseId)).map((c) => ({ browseId: c.browseId, name: c.name }));
+    const chosen = d.discovered.filter((c) => d.dxPick.has(c.browseId) && !d.dxDone.has(c.browseId)).map((c) => ({ browseId: c.browseId, name: c.name, credit: c.credit }));
     if (!chosen.length) return discFinish();
     d.error = '';
     d.phase = 'collecting';
@@ -1289,6 +1434,8 @@
           return removeSelected();
         case 'apply-order':
           return applySortToPlaylist();
+        case 'disc-add-artist':
+          return discAddArtist();
         case 'disc-search':
           state.disc.includeSolo = false; // the artist alone: no roster, so no members or franchise credits
           state.disc.franchise = false;
@@ -1480,6 +1627,8 @@
       render();
     } else if (k === 'disc-artist') {
       state.disc.artistQuery = e.target.value; // no render: it would steal focus mid-typing
+    } else if (k === 'disc-add') {
+      state.disc.addText = e.target.value; // no render, like the artist box
     } else if (k === 'disc-newname') {
       state.disc.newName = e.target.value;
     } else if (k === 'disc-target') {
@@ -1501,6 +1650,10 @@
     if (e.target.dataset.in === 'disc-artist' && e.key === 'Enter') {
       e.preventDefault();
       discAuto();
+    }
+    if (e.target.dataset.in === 'disc-add' && e.key === 'Enter') {
+      e.preventDefault();
+      discAddArtist();
     }
     if (e.target.dataset.in === 'newtag' && (e.key === 'Enter' || e.key === ',')) {
       e.preventDefault();

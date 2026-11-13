@@ -392,6 +392,101 @@
     return { tracks: [...byId.values()], stats, credits: [...credits.values()].filter((c) => c.browseId !== artist.browseId) };
   }
 
+  // ---------- credit-only acts ("JEONGHAN & JOSHUA") ----------
+
+  // Some units exist only as a credit string: "JEONGHAN & JOSHUA" is two artist runs, the first linked to Jeonghan's page and
+  // the second plain text, so there is no artist page to search for or collect. Verified live: a songs search for it returns
+  // exactly their songs, each credited that way. They are found by keeping the song rows whose credit names the same people.
+  const SONGS_FILTER = 'EgWKAQIIAWoMEA4QChADEAQQCRAF';
+  /** The people named in a credit, ignoring joiners and order: "Jeonghan x Joshua" = "JEONGHAN & JOSHUA". */
+  const creditKey = (s) =>
+    String(s || '')
+      .toLowerCase()
+      .replace(/[×&+]/g, ' ')
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((w) => w && w !== 'x' && w !== 'and' && w !== 'with')
+      .sort()
+      .join(' ');
+
+  /** Song rows of a songs search: { videoId, title, credit (text before the album), album, albumId, durationText }. */
+  function creditSongsFrom(res) {
+    const out = [];
+    walk(res, (n) => {
+      const r = n.musicResponsiveListItemRenderer;
+      if (!r) return;
+      const play = r.overlay && r.overlay.musicItemThumbnailOverlayRenderer && r.overlay.musicItemThumbnailOverlayRenderer.content && r.overlay.musicItemThumbnailOverlayRenderer.content.musicPlayButtonRenderer;
+      const videoId = (r.playlistItemData && r.playlistItemData.videoId) || (play && play.playNavigationEndpoint && play.playNavigationEndpoint.watchEndpoint && play.playNavigationEndpoint.watchEndpoint.videoId) || '';
+      if (!videoId) return false;
+      const cols = (r.flexColumns || []).map((c) => c.musicResponsiveListItemFlexColumnRenderer && c.musicResponsiveListItemFlexColumnRenderer.text);
+      const runs = (cols[1] && cols[1].runs) || [];
+      let credit = '';
+      for (const run of runs) {
+        if (/^\s*[•·]\s*$/.test(run.text || '') || isAlbumEp(run.navigationEndpoint)) break;
+        credit += run.text || '';
+      }
+      const albumRun = runs.find((run) => isAlbumEp(run.navigationEndpoint));
+      const durationText = (runs.map((run) => (run.text || '').trim()).find((t) => /^\d+:\d{2}(:\d{2})?$/.test(t))) || '';
+      out.push({ videoId, title: text(cols[0]), credit: credit.trim(), album: albumRun ? albumRun.text : '', albumId: albumRun ? browseOf(albumRun.navigationEndpoint).browseId : '', durationText });
+      return false;
+    });
+    return out;
+  }
+
+  /**
+   * The songs credited to a multi-person act that has no artist page, or null. Only names of two or more people qualify
+   * (a single name is an ordinary artist, found by searchArtists).
+   */
+  async function findCreditSongs(name) {
+    const key = creditKey(name);
+    if (key.split(' ').length < 2) return null;
+    const songs = new Map();
+    let credit = '';
+    for (const query of new Set([name, name.replace(/\s+(?:x|×)\s+/gi, ' & ')])) {
+      let res;
+      try {
+        res = await it('search', { query, params: SONGS_FILTER });
+      } catch (_) {
+        continue;
+      }
+      for (const s of creditSongsFrom(res)) {
+        if (creditKey(s.credit) !== key || songs.has(s.videoId)) continue;
+        songs.set(s.videoId, s);
+        credit = credit || s.credit;
+      }
+    }
+    return songs.size ? { name: credit, key, songs: [...songs.values()] } : null;
+  }
+
+  /**
+   * collectArtist's counterpart for a credit-only act (see findCreditSongs): reads the releases those songs are on and
+   * keeps just the credited songs from them (the rest of the release is solo and other-unit work), falling back to the
+   * search row for a song whose release couldn't be read. Same return shape as collectArtist.
+   */
+  async function collectCredit(entry, { onStep, control } = {}) {
+    const wanted = new Set(entry.credit.songs.map((s) => s.videoId));
+    const refs = new Map();
+    for (const s of entry.credit.songs) if (s.albumId && !refs.has(s.albumId)) refs.set(s.albumId, { browseId: s.albumId, title: s.album, type: '', year: '' });
+    const stats = { releases: 0, failedReleases: 0, reused: 0 };
+    const tracks = new Map();
+    let done = 0;
+    onStep && onStep(0, refs.size, `Reading ${entry.name}…`);
+    for (const ref of refs.values()) {
+      if (control && control.cancelled) break;
+      try {
+        for (const t of await getReleaseTracks(ref)) if (wanted.has(t.videoId) && !tracks.has(t.videoId)) tracks.set(t.videoId, { ...t, via: [entry.name] });
+        stats.releases++;
+      } catch (_) {
+        stats.failedReleases++;
+      }
+      onStep && onStep(++done, refs.size, `${entry.name}: ${ref.title}`);
+    }
+    for (const s of entry.credit.songs) {
+      if (tracks.has(s.videoId)) continue;
+      tracks.set(s.videoId, { videoId: s.videoId, title: s.title, artists: [s.credit], artistRefs: [], album: s.album, albumId: s.albumId, durationText: s.durationText, duration: U.parseDuration(s.durationText), releaseType: '', year: '', trackNo: 0, releaseArtists: [], via: [entry.name] });
+    }
+    return { tracks: [...tracks.values()], stats, credits: [] };
+  }
+
   // ---------- version-aware dedupe ----------
 
   const primaryKey = (t) => U.titleKey(t.title, { versions: true }) + '|' + U.normalizeKey((t.artists && t.artists[0]) || '');
@@ -596,5 +691,5 @@
   /** Character credits in anime/game catalogs are named "Character(CV.Voice Actor)" / "Character (CV: Voice Actor)"; units and groups aren't. */
   const isCharacterCredit = (name) => /\(\s*CV\b|\bCV[.:]/i.test(name || '');
 
-  YTMO.catalog = { isCharacterCredit, searchArtists, collectArtist, getPlaylistTracks, classify, existingFrom, groupByRelease, createPlaylist, addVideos, _parse: { parseRows, parseReleaseHeader, extractArtists, releaseRefsFrom, findContinuation } };
+  YTMO.catalog = { isCharacterCredit, searchArtists, collectArtist, findCreditSongs, collectCredit, creditKey, getPlaylistTracks, classify, existingFrom, groupByRelease, createPlaylist, addVideos, _parse: { parseRows, parseReleaseHeader, extractArtists, releaseRefsFrom, findContinuation } };
 })();
